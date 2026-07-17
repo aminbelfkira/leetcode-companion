@@ -58,6 +58,42 @@ export interface PendingAccepted {
 }
 
 // ---------------------------------------------------------------------------
+// Messages runtime → background (single-writer, §3/§4)
+// ---------------------------------------------------------------------------
+
+/** Payload d'une review saisie (panneau, popup pendingAccepted, abandon). */
+export interface ReviewInput {
+  slug: string;
+  frontendId: string;
+  title: string;
+  lcDifficulty: ProblemCard["lcDifficulty"];
+  metaIncomplete: boolean;
+  mode: Mode;
+  feel: Feel | null;
+  submissionsInSession: number;
+  minutesInSession: number | null;
+}
+
+export type RuntimeRequest =
+  | { kind: "CHECK_COOLDOWN"; slug: string }
+  | { kind: "PREVIEW_REVIEW"; slug: string; mode: Mode; feel: Feel | null }
+  | { kind: "LOG_REVIEW"; review: ReviewInput }
+  | { kind: "SET_PENDING_ACCEPTED"; pending: PendingAccepted }
+  | { kind: "CLEAR_PENDING_ACCEPTED" };
+
+export interface RuntimeResponseMap {
+  CHECK_COOLDOWN: { underCooldown: boolean };
+  PREVIEW_REVIEW: { scheduledDue: string };
+  LOG_REVIEW: { scheduledDue: string };
+  SET_PENDING_ACCEPTED: { ok: true };
+  CLEAR_PENDING_ACCEPTED: { ok: true };
+}
+
+export type RuntimeResponse<K extends RuntimeRequest["kind"]> =
+  | RuntimeResponseMap[K]
+  | { error: string };
+
+// ---------------------------------------------------------------------------
 // Événements MAIN → ISOLATED (§5.4)
 // ---------------------------------------------------------------------------
 
