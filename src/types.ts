@@ -108,8 +108,9 @@ export type RuntimeResponse<K extends RuntimeRequest["kind"]> =
 // ---------------------------------------------------------------------------
 
 export interface PageEventPayloads {
-  "submission-created": { id: number; slug: string };
-  "submission-result": { id: number; statusMsg: string; statusCode: number };
+  /** IDs restent des strings : aucune perte de précision si LeetCode les sérialise ainsi. */
+  "submission-created": { id: string; slug: string };
+  "submission-result": { id: string; statusMsg: string; statusCode: number };
   "url-change": { pathname: string };
 }
 

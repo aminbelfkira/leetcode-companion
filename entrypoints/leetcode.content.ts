@@ -5,8 +5,7 @@ import { LOG_PREFIX, PAGE_MSG_SOURCE, SESSION_MAX_AGE_H } from "../src/config";
 import { resolveMeta } from "../src/lc-graphql";
 import {
   LC_ORIGIN,
-  STATUS_CODE_ACCEPTED,
-  STATUS_MSG_ACCEPTED,
+  isAcceptedVerdict,
   problemSlugFromPathname,
 } from "../src/lc-endpoints";
 import { sendToBackground } from "../src/messaging";
@@ -100,8 +99,7 @@ export default defineContentScript({
         case "submission-result": {
           const { id, statusMsg, statusCode } = msg.payload;
           console.log(`${LOG_PREFIX} submission-result`, { id, statusMsg, statusCode });
-          const accepted =
-            statusMsg === STATUS_MSG_ACCEPTED && statusCode === STATUS_CODE_ACCEPTED;
+          const accepted = isAcceptedVerdict(statusMsg, statusCode);
           if (accepted && session !== null) {
             const minutes = Math.round((Date.now() - session.startedAt) / 60_000);
             const snapshot = {
