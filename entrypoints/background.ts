@@ -18,6 +18,7 @@ import {
   migrateIfNeeded,
   saveReview,
   setPendingAccepted,
+  setSettings,
 } from "../src/storage";
 import type {
   ProblemCard,
@@ -105,6 +106,15 @@ export default defineBackground(() => {
       case "CLEAR_PENDING_ACCEPTED":
         return serialized(async () => {
           await setPendingAccepted(null);
+          return { ok: true } as const;
+        });
+      case "SNOOZE_BANNER":
+        return serialized(async () => {
+          // §9.3 — snooze jusqu'au prochain minuit local.
+          const midnight = new Date();
+          midnight.setHours(24, 0, 0, 0);
+          const settings = await getSettings();
+          await setSettings({ ...settings, bannerSnoozedUntil: midnight.toISOString() });
           return { ok: true } as const;
         });
     }

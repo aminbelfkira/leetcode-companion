@@ -4,11 +4,14 @@
 import { LOG_PREFIX, PAGE_MSG_SOURCE, SESSION_MAX_AGE_H } from "../src/config";
 import { resolveMeta } from "../src/lc-graphql";
 import {
+  LC_ORIGIN,
   STATUS_CODE_ACCEPTED,
   STATUS_MSG_ACCEPTED,
   problemSlugFromPathname,
 } from "../src/lc-endpoints";
 import { sendToBackground } from "../src/messaging";
+import { getCards, getSettings } from "../src/storage";
+import { removeBanner, renderBanner } from "../src/ui/banner";
 import { isPanelMounted, mountPanel } from "../src/ui/panel";
 import type { PageMessage } from "../src/types";
 
@@ -162,6 +165,54 @@ export default defineContentScript({
           },
         },
       );
+    }
+
+    // --- Bandeau (§9.3) --------------------------------------------------
+
+    /** Affiche/retire le bandeau selon dus + snooze ; rappelé sur storage.onChanged. */
+    async function refreshBanner(): Promise<void> {
+      try {
+        const [cards, settings] = await Promise.all([getCards(), getSettings()]);
+        const now = Date.now();
+        const snoozed =
+          settings.bannerSnoozedUntil !== null &&
+          new Date(settings.bannerSnoozedUntil).getTime() > now;
+        const due = Object.values(cards)
+          .filter((c) => new Date(c.fsrs.due).getTime() <= now)
+          .sort((a, b) => a.fsrs.due.localeCompare(b.fsrs.due));
+        const oldest = due[0];
+        if (snoozed || oldest === undefined) {
+          removeBanner();
+          return;
+        }
+        renderBanner(
+          {
+            count: due.length,
+            next: { slug: oldest.slug, frontendId: oldest.frontendId, title: oldest.title },
+          },
+          {
+            onOpen: (slug) => location.assign(`${LC_ORIGIN}/problems/${slug}/`),
+            onSnooze: () => {
+              void sendToBackground({ kind: "SNOOZE_BANNER" }).catch((err: unknown) =>
+                console.warn(`${LOG_PREFIX} snooze`, err),
+              );
+            },
+          },
+        );
+      } catch (err) {
+        console.warn(`${LOG_PREFIX} bandeau`, err);
+      }
+    }
+
+    // Mise à jour live inter-onglets : reviews, snooze, etc.
+    browser.storage.onChanged.addListener(() => {
+      void refreshBanner();
+    });
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => void refreshBanner(), { once: true });
+    } else {
+      void refreshBanner();
     }
 
     window.addEventListener("message", onMessage);

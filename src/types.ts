@@ -79,7 +79,8 @@ export type RuntimeRequest =
   | { kind: "PREVIEW_REVIEW"; slug: string; mode: Mode; feel: Feel | null }
   | { kind: "LOG_REVIEW"; review: ReviewInput }
   | { kind: "SET_PENDING_ACCEPTED"; pending: PendingAccepted }
-  | { kind: "CLEAR_PENDING_ACCEPTED" };
+  | { kind: "CLEAR_PENDING_ACCEPTED" }
+  | { kind: "SNOOZE_BANNER" };
 
 export interface RuntimeResponseMap {
   CHECK_COOLDOWN: { underCooldown: boolean };
@@ -87,6 +88,7 @@ export interface RuntimeResponseMap {
   LOG_REVIEW: { scheduledDue: string };
   SET_PENDING_ACCEPTED: { ok: true };
   CLEAR_PENDING_ACCEPTED: { ok: true };
+  SNOOZE_BANNER: { ok: true };
 }
 
 export type RuntimeResponse<K extends RuntimeRequest["kind"]> =
