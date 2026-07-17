@@ -1,6 +1,7 @@
 import { defineConfig } from "wxt";
 
 export default defineConfig({
+  outDir: "output",
   manifest: {
     name: "LeetCode × FSRS",
     description:

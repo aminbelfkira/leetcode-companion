@@ -17,7 +17,7 @@ Puis dans Chrome :
 
 1. `chrome://extensions`
 2. Activer le **mode développeur** (en haut à droite)
-3. **Charger l'extension non empaquetée** → sélectionner `.output/chrome-mv3/`
+3. **Charger l'extension non empaquetée** → sélectionner `output/chrome-mv3/`
 
 Pour développer : `npm run dev` (rechargement automatique).
 
