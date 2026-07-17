@@ -78,6 +78,12 @@ export function parseCheckEndpoint(url: string): CheckEndpoint | null {
   return id === undefined ? null : { id: normalizeSubmissionId(id) ?? id };
 }
 
+/** Le frontend actuel charge le verdict détaillé via cette route GraphQL. */
+export function isGraphqlEndpoint(url: string): boolean {
+  const pathname = pathnameFor(url);
+  return pathname === "/graphql" || pathname === "/graphql/";
+}
+
 /**
  * LeetCode documente un nombre, mais certaines couches de transport
  * sérialisent les ids en string. On les accepte sans précision perdue.
@@ -104,6 +110,18 @@ export function submissionIdFromResponse(response: SubmitResponse | null): strin
   return isRecord(response.data) ? normalizeSubmissionId(response.data.submission_id) : null;
 }
 
+/**
+ * Extrait uniquement la variable de métadonnée `submissionId` d'une requête
+ * GraphQL. Une mutation qui contient le code est explicitement ignorée : le
+ * code utilisateur n'est ni lu, ni stocké, ni journalisé par l'extension.
+ */
+export function submissionIdFromGraphqlRequestBody(body: unknown): string | null {
+  if (typeof body !== "string") return null;
+  if (/"(?:typedCode|typed_code|code)"\s*:/.test(body)) return null;
+  const match = /"(?:submissionId|submission_id)"\s*:\s*"?(\d+)"?/.exec(body);
+  return match === null ? null : normalizeSubmissionId(match[1]);
+}
+
 /** Le verdict terminal peut être encodé par state ou par finished selon la réponse. */
 export function isFinalCheckResponse(response: CheckResponse): boolean {
   return (
@@ -117,6 +135,53 @@ function numericStatusCode(value: unknown): number | null {
   if (typeof value !== "string" || !/^\s*-?\d+\s*$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * LeetCode moderne demande `submissionDetails(submissionId)` via GraphQL.
+ * Son UI considère `statusCode === 10` comme l'Accepted ; le payload ne
+ * contient pas systématiquement l'ancien couple status_msg/status_code.
+ * La recherche est volontairement limitée aux enveloppes de verdict connues,
+ * afin de ne jamais parcourir un éventuel champ de code de réponse.
+ */
+export function acceptedVerdictFromGraphqlResponse(response: unknown): CheckResponse | null {
+  const containerKeys = [
+    "data",
+    "submissionDetails",
+    "submissionDetail",
+    "submission",
+    "submitResult",
+    "result",
+  ] as const;
+
+  function visit(value: unknown, depth: number): CheckResponse | null {
+    if (depth > 5) return null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item, depth + 1);
+        if (found !== null) return found;
+      }
+      return null;
+    }
+    if (!isRecord(value)) return null;
+
+    const statusCode = numericStatusCode(value.statusCode ?? value.status_code);
+    if (statusCode === STATUS_CODE_ACCEPTED) {
+      return {
+        state: CHECK_STATE_FINAL,
+        status_msg: STATUS_MSG_ACCEPTED,
+        status_code: statusCode,
+      };
+    }
+
+    for (const key of containerKeys) {
+      const found = visit(value[key], depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+
+  return visit(response, 0);
 }
 
 /** Normalise le payload relayé à l'autre monde de l'extension. */

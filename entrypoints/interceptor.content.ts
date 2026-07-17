@@ -4,11 +4,14 @@
 
 import { LOG_PREFIX, PAGE_MSG_SOURCE } from "../src/config";
 import {
+  acceptedVerdictFromGraphqlResponse,
+  isGraphqlEndpoint,
   isFinalCheckResponse,
   parseCheckEndpoint,
   parseSubmitEndpoint,
   statusCodeForEvent,
   statusMessageForEvent,
+  submissionIdFromGraphqlRequestBody,
   submissionIdFromResponse,
   type CheckResponse,
   type SubmitResponse,
@@ -23,6 +26,9 @@ export default defineContentScript({
     /** Ids des vraies soumissions (POST submit/) de la page. Un id de « Run »
      *  (interpret_solution) n'y entre jamais → ses résultats check/ sont ignorés (§5.1). */
     const knownSubmissionIds = new Set<string>();
+    /** Empêche les doubles événements quand LeetCode rejoue le même transport. */
+    const observedSubmissionIds = new Set<string>();
+    const MAX_OBSERVED_SUBMISSIONS = 128;
     /**
      * Un poll peut, sur un verdict très rapide, finir avant la lecture du body
      * de la réponse submit. On le garde brièvement, puis on le traite seulement
@@ -61,8 +67,26 @@ export default defineContentScript({
       });
     }
 
+    function receiveFinalVerdict(id: string, response: CheckResponse): void {
+      if (knownSubmissionIds.has(id)) {
+        postSubmissionResult(id, response);
+        return;
+      }
+      // Le même garde-fou couvre un poll historique ou la réponse GraphQL
+      // qui arriverait avant que le body de submit soit lu.
+      earlyFinalChecks.set(id, { response, receivedAt: Date.now() });
+      pruneEarlyFinalChecks();
+    }
+
     function rememberSubmission(id: string, slug: string): void {
       pruneEarlyFinalChecks();
+      if (observedSubmissionIds.has(id)) return;
+      observedSubmissionIds.add(id);
+      while (observedSubmissionIds.size > MAX_OBSERVED_SUBMISSIONS) {
+        const oldestId = observedSubmissionIds.values().next().value;
+        if (oldestId === undefined) break;
+        observedSubmissionIds.delete(oldestId);
+      }
       knownSubmissionIds.add(id);
       post("submission-created", { id, slug });
 
@@ -70,7 +94,12 @@ export default defineContentScript({
       if (earlyCheck !== undefined) postSubmissionResult(id, earlyCheck.response);
     }
 
-    function handleResponse(method: string, url: string, bodyText: string): void {
+    function handleResponse(
+      method: string,
+      url: string,
+      bodyText: string,
+      graphqlSubmissionId: string | null,
+    ): void {
       const submit = method === "POST" ? parseSubmitEndpoint(url) : null;
       if (submit !== null) {
         const id = submissionIdFromResponse(safeJson<SubmitResponse>(bodyText));
@@ -87,15 +116,16 @@ export default defineContentScript({
         const { id } = check;
         const body = safeJson<CheckResponse>(bodyText);
         if (body === null || !isFinalCheckResponse(body)) return; // PENDING / STARTED
-        if (knownSubmissionIds.has(id)) {
-          postSubmissionResult(id, body);
-          return;
-        }
+        receiveFinalVerdict(id, body);
+        return;
+      }
 
-        // Il peut s'agir de Run : aucune émission tant qu'un vrai submit ne
-        // confirme pas ce même id. Le cache est borné et expire après 30 s.
-        earlyFinalChecks.set(id, { response: body, receivedAt: Date.now() });
-        pruneEarlyFinalChecks();
+      if (graphqlSubmissionId !== null) {
+        const accepted = acceptedVerdictFromGraphqlResponse(safeJson<unknown>(bodyText));
+        if (accepted !== null) {
+          console.log(`${LOG_PREFIX} verdict GraphQL détecté`, { id: graphqlSubmissionId });
+          receiveFinalVerdict(graphqlSubmissionId, accepted);
+        }
       }
     }
 
@@ -108,7 +138,11 @@ export default defineContentScript({
     }
 
     interface PatchedXhr extends XMLHttpRequest {
-      __lcfsrs?: { method: string; url: string };
+      __lcfsrs?: {
+        method: string;
+        url: string;
+        graphqlSubmissionId: string | null;
+      };
     }
 
     type MarkedFunction = { __lcfsrsPatched?: boolean };
@@ -133,17 +167,26 @@ export default defineContentScript({
         init?: RequestInit,
       ): Promise<Response> {
         const url = input instanceof Request ? input.url : String(input);
+        const graphqlSubmissionId = isGraphqlEndpoint(url)
+          ? submissionIdFromGraphqlRequestBody(init?.body)
+          : null;
         const method = (
           init?.method ?? (input instanceof Request ? input.method : "GET")
         ).toUpperCase();
         const promise = originalFetch.call(window, input, init);
         promise
           .then((res) => {
-            if (parseSubmitEndpoint(url) === null && parseCheckEndpoint(url) === null) return;
+            if (
+              parseSubmitEndpoint(url) === null &&
+              parseCheckEndpoint(url) === null &&
+              graphqlSubmissionId === null
+            ) {
+              return;
+            }
             void res
               .clone()
               .text()
-              .then((text) => handleResponse(method, url, text))
+              .then((text) => handleResponse(method, url, text, graphqlSubmissionId))
               .catch(() => {});
           })
           .catch(() => {}); // l'appelant garde la promesse d'origine, rejets inclus
@@ -164,7 +207,11 @@ export default defineContentScript({
         ...args: Parameters<XMLHttpRequest["open"]>
       ): void {
         const [method, url] = args;
-        this.__lcfsrs = { method: String(method).toUpperCase(), url: String(url) };
+        this.__lcfsrs = {
+          method: String(method).toUpperCase(),
+          url: String(url),
+          graphqlSubmissionId: null,
+        };
         originalOpen.apply(this, args);
       });
       const patchedSend = markPatched(function (
@@ -172,15 +219,25 @@ export default defineContentScript({
         ...args: Parameters<XMLHttpRequest["send"]>
       ): void {
         const meta = this.__lcfsrs;
+        if (meta !== undefined && isGraphqlEndpoint(meta.url)) {
+          meta.graphqlSubmissionId = submissionIdFromGraphqlRequestBody(args[0]);
+        }
         if (
           meta !== undefined &&
-          (parseSubmitEndpoint(meta.url) !== null || parseCheckEndpoint(meta.url) !== null)
+          (parseSubmitEndpoint(meta.url) !== null ||
+            parseCheckEndpoint(meta.url) !== null ||
+            meta.graphqlSubmissionId !== null)
         ) {
           this.addEventListener(
             "load",
             () => {
               try {
-                handleResponse(meta.method, meta.url, this.responseText);
+                handleResponse(
+                  meta.method,
+                  meta.url,
+                  this.responseText,
+                  meta.graphqlSubmissionId,
+                );
               } catch (err) {
                 console.warn(`${LOG_PREFIX} interceptor XHR`, err);
               }
