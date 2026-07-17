@@ -80,7 +80,14 @@ export type RuntimeRequest =
   | { kind: "LOG_REVIEW"; review: ReviewInput }
   | { kind: "SET_PENDING_ACCEPTED"; pending: PendingAccepted }
   | { kind: "CLEAR_PENDING_ACCEPTED" }
-  | { kind: "SNOOZE_BANNER" };
+  | { kind: "SNOOZE_BANNER" }
+  | {
+      kind: "UPDATE_CARD_META"; // §10 — répare une carte metaIncomplete
+      slug: string;
+      frontendId: string;
+      title: string;
+      lcDifficulty: ProblemCard["lcDifficulty"];
+    };
 
 export interface RuntimeResponseMap {
   CHECK_COOLDOWN: { underCooldown: boolean };
@@ -89,6 +96,7 @@ export interface RuntimeResponseMap {
   SET_PENDING_ACCEPTED: { ok: true };
   CLEAR_PENDING_ACCEPTED: { ok: true };
   SNOOZE_BANNER: { ok: true };
+  UPDATE_CARD_META: { ok: true };
 }
 
 export type RuntimeResponse<K extends RuntimeRequest["kind"]> =

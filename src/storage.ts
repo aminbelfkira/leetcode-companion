@@ -69,6 +69,19 @@ export async function saveReview(card: ProblemCard, entry: ReviewLogEntry): Prom
   await browser.storage.local.set({ cards, log });
 }
 
+/** §10 — répare les métadonnées d'une carte marquée metaIncomplete. */
+export async function updateCardMeta(
+  slug: string,
+  meta: Pick<ProblemCard, "frontendId" | "title" | "lcDifficulty">,
+): Promise<void> {
+  const cards = await getCards();
+  const card = cards[slug];
+  if (card === undefined) return;
+  const { metaIncomplete: _dropped, ...rest } = card;
+  cards[slug] = { ...rest, ...meta, updatedAt: new Date().toISOString() };
+  await browser.storage.local.set({ cards });
+}
+
 export async function setPendingAccepted(pending: PendingAccepted | null): Promise<void> {
   await browser.storage.local.set({ pendingAccepted: pending });
 }

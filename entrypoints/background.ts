@@ -19,6 +19,7 @@ import {
   saveReview,
   setPendingAccepted,
   setSettings,
+  updateCardMeta,
 } from "../src/storage";
 import type {
   ProblemCard,
@@ -106,6 +107,15 @@ export default defineBackground(() => {
       case "CLEAR_PENDING_ACCEPTED":
         return serialized(async () => {
           await setPendingAccepted(null);
+          return { ok: true } as const;
+        });
+      case "UPDATE_CARD_META":
+        return serialized(async () => {
+          await updateCardMeta(msg.slug, {
+            frontendId: msg.frontendId,
+            title: msg.title,
+            lcDifficulty: msg.lcDifficulty,
+          });
           return { ok: true } as const;
         });
       case "SNOOZE_BANNER":

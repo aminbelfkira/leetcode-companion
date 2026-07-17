@@ -34,11 +34,41 @@ export default defineContentScript({
       if (session === null || session.slug !== slug || stale) {
         session = { slug, startedAt: now, submitCount: 0 };
         console.log(`${LOG_PREFIX} nouvelle session`, { slug, stale });
+        void maybeRepairMeta(slug).catch((err: unknown) =>
+          console.warn(`${LOG_PREFIX} repairMeta`, err),
+        );
       }
       return session;
     }
 
+    /** §10 — carte metaIncomplete : ré-essai GraphQL à la visite du problème. */
+    const metaRepairTried = new Set<string>();
+    async function maybeRepairMeta(slug: string): Promise<void> {
+      if (metaRepairTried.has(slug)) return;
+      metaRepairTried.add(slug);
+      const cards = await getCards();
+      if (cards[slug]?.metaIncomplete !== true) return;
+      const meta = await resolveMeta(slug);
+      if (meta.metaIncomplete) return; // toujours en échec, on retentera plus tard
+      await sendToBackground({
+        kind: "UPDATE_CARD_META",
+        slug,
+        frontendId: meta.frontendId,
+        title: meta.title,
+        lcDifficulty: meta.lcDifficulty,
+      });
+      console.log(`${LOG_PREFIX} métadonnées réparées`, slug);
+    }
+
     function onMessage(event: MessageEvent): void {
+      try {
+        onMessageUnsafe(event);
+      } catch (err) {
+        console.warn(`${LOG_PREFIX} onMessage`, err); // jamais de crash visible (§10)
+      }
+    }
+
+    function onMessageUnsafe(event: MessageEvent): void {
       if (event.source !== window) return;
       const data: unknown = event.data;
       if (
