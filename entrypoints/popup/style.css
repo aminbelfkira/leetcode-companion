@@ -13,21 +13,225 @@
 
 * {
   box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  margin: 0;
   width: 340px;
   background: var(--bg);
   color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
+  line-height: 1.4;
 }
 
 #app {
   padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .muted {
   color: var(--mut);
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+header h1 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+header .date {
+  color: var(--mut);
+  font-size: 11px;
+  flex: 1;
+}
+
+.count {
+  color: var(--due);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.due-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.due-item:first-child {
+  padding-top: 0;
+}
+
+.due-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.due-item .info {
+  flex: 1;
+  min-width: 0;
+}
+
+.due-item .name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.due-item .sub {
+  color: var(--mut);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.chip {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-family: var(--mono);
+  border: 1px solid var(--line);
+  background: var(--card2);
+  color: var(--mut);
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.chip.late {
+  color: var(--due);
+  border-color: var(--due);
+}
+
+.chip.today {
+  color: var(--lc);
+  border-color: var(--lc);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn {
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 5px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  border-color: var(--mut);
+}
+
+.btn.primary {
+  background: var(--lc);
+  border-color: var(--lc);
+  color: #1a1305;
+  font-weight: 650;
+}
+
+.btn.primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn.danger {
+  color: var(--due);
+}
+
+.upcoming {
+  color: var(--mut);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+.section-title {
+  color: var(--mut);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.rate-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.opt {
+  flex: 1;
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 6px 4px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.opt small {
+  display: block;
+  color: var(--mut);
+  font-size: 10px;
+}
+
+.opt.sel {
+  border-color: var(--lc);
+  color: var(--lc);
+}
+
+.opt.sel small {
+  color: var(--lc);
+}
+
+.next-line {
+  color: var(--mut);
+  font-size: 11px;
+  margin-bottom: 8px;
+  min-height: 14px;
+}
+
+.next-line b {
+  color: var(--ink);
+}
+
+.wide {
+  width: 100%;
+}
+
+.empty {
+  text-align: center;
+  padding: 18px 0;
+}
+
+.empty .big {
+  font-size: 14px;
+  font-weight: 650;
+  margin-bottom: 4px;
+}
+
+footer {
+  display: flex;
+  justify-content: center;
 }
