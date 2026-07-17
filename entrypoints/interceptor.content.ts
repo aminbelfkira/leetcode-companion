@@ -137,6 +137,31 @@ export default defineContentScript({
       }
     }
 
+    /**
+     * LeetCode configure certaines requêtes GraphQL en `responseType = "blob"`.
+     * Accéder à `responseText` dans ce cas lève un InvalidStateError et empêchait
+     * donc tout traitement du verdict. On convertit uniquement la réponse des
+     * requêtes déjà identifiées comme pertinentes, sans jamais journaliser ni
+     * conserver son contenu.
+     */
+    async function textFromXhrResponse(xhr: XMLHttpRequest): Promise<string | null> {
+      switch (xhr.responseType) {
+        case "":
+        case "text":
+          return xhr.responseText;
+        case "json":
+          return xhr.response === null ? null : JSON.stringify(xhr.response);
+        case "blob":
+          return xhr.response instanceof Blob ? xhr.response.text() : null;
+        case "arraybuffer":
+          return xhr.response instanceof ArrayBuffer
+            ? new TextDecoder().decode(xhr.response)
+            : null;
+        default:
+          return null;
+      }
+    }
+
     interface PatchedXhr extends XMLHttpRequest {
       __lcfsrs?: {
         method: string;
@@ -231,16 +256,20 @@ export default defineContentScript({
           this.addEventListener(
             "load",
             () => {
-              try {
-                handleResponse(
-                  meta.method,
-                  meta.url,
-                  this.responseText,
-                  meta.graphqlSubmissionId,
-                );
-              } catch (err) {
-                console.warn(`${LOG_PREFIX} interceptor XHR`, err);
-              }
+              void textFromXhrResponse(this)
+                .then((text) => {
+                  if (text !== null) {
+                    handleResponse(
+                      meta.method,
+                      meta.url,
+                      text,
+                      meta.graphqlSubmissionId,
+                    );
+                  }
+                })
+                .catch((err: unknown) => {
+                  console.warn(`${LOG_PREFIX} interceptor XHR`, err);
+                });
             },
             { once: true },
           );
