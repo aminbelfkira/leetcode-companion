@@ -1,0 +1,33 @@
+:root {
+  --bg: #0f1011;
+  --card: #1a1b1d;
+  --card2: #242528;
+  --line: #2f3134;
+  --ink: #eff1f3;
+  --mut: #8f959c;
+  --lc: #ffa116;
+  --ok: #2cbb5d;
+  --due: #ff5c5c;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 340px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+#app {
+  padding: 12px;
+}
+
+.muted {
+  color: var(--mut);
+}
