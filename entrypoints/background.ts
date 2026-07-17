@@ -1,7 +1,14 @@
 // Service worker (§4) : seul écrivain du storage, applique FSRS, badge.
 // MV3 éphémère : aucun état mémoire supposé persistant.
 
-import { LOG_PREFIX } from "../src/config";
+import {
+  ALARM_BADGE_DAILY,
+  ALARM_BADGE_PERIODIC,
+  BADGE_COLOR,
+  DAILY_ALARM_HOUR,
+  DAILY_ALARM_MINUTE,
+  LOG_PREFIX,
+} from "../src/config";
 import { gradeFor, nextState } from "../src/fsrs";
 import {
   getCards,
@@ -23,11 +30,44 @@ import type {
 export default defineBackground(() => {
   console.log(`${LOG_PREFIX} background démarré`);
 
-  void migrateIfNeeded().catch((err) => console.error(`${LOG_PREFIX} migration`, err));
+  void migrateIfNeeded()
+    .then(updateBadge)
+    .catch((err) => console.error(`${LOG_PREFIX} migration`, err));
 
-  // Phase 0 : badge de test — remplacé en phase 3 par le vrai compteur de dus.
-  void browser.action.setBadgeBackgroundColor({ color: "#ff5c5c" });
-  void browser.action.setBadgeText({ text: "0" });
+  // §8 — recalculs périodiques (jamais de setTimeout long en MV3).
+  void browser.alarms.create(ALARM_BADGE_PERIODIC, { periodInMinutes: 60 });
+  void browser.alarms.create(ALARM_BADGE_DAILY, {
+    when: nextDailyAlarmTime(),
+    periodInMinutes: 24 * 60,
+  });
+  browser.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === ALARM_BADGE_PERIODIC || alarm.name === ALARM_BADGE_DAILY) {
+      void updateBadge();
+    }
+  });
+
+  /** Prochain 00:05 local (§8). */
+  function nextDailyAlarmTime(): number {
+    const next = new Date();
+    next.setHours(DAILY_ALARM_HOUR, DAILY_ALARM_MINUTE, 0, 0);
+    if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
+    return next.getTime();
+  }
+
+  /** Badge = nombre de cartes dues (due <= maintenant, retards inclus). */
+  async function updateBadge(): Promise<void> {
+    try {
+      const cards = await getCards();
+      const now = Date.now();
+      const due = Object.values(cards).filter(
+        (c) => new Date(c.fsrs.due).getTime() <= now,
+      ).length;
+      await browser.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
+      await browser.action.setBadgeText({ text: due > 0 ? String(due) : "" });
+    } catch (err) {
+      console.error(`${LOG_PREFIX} badge`, err);
+    }
+  }
 
   // Les mutations sont sérialisées : pas de read-modify-write entrelacés.
   let writeQueue: Promise<unknown> = Promise.resolve();
@@ -126,7 +166,7 @@ export default defineBackground(() => {
     await saveReview(card, entry);
     if (pending?.slug === review.slug) await setPendingAccepted(null);
     console.log(`${LOG_PREFIX} review loguée`, { slug: review.slug, grade, due: fsrs.due });
-    // Phase 3 : recalcul du badge ici.
+    await updateBadge();
     return { scheduledDue: fsrs.due };
   }
 });
