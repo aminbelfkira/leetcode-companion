@@ -39,10 +39,14 @@ et d'exporter les cartes et le journal au format JSON.
 Une fois activée, chaque nouvelle soumission Accepted met à jour :
 
 ```text
-solutions/
+top-interview-150/
   0027-remove-element/
     solution.cpp
 ```
+
+Lorsqu'un exercice est soumis depuis un Study Plan ou une liste LeetCode, son `envId` est utilisé
+comme dossier racine (`top-interview-150`, par exemple). Sans contexte détectable, l'extension
+utilise `solutions/` comme dossier de repli.
 
 Le fichier contient le code et un en-tête commenté avec le lien LeetCode, la date, le langage, le
 runtime, la mémoire et leurs « Beats » lorsqu'ils sont fournis par LeetCode. Une nouvelle soumission

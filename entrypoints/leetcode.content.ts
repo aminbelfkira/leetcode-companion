@@ -5,6 +5,7 @@ import { LOG_PREFIX, PAGE_MSG_SOURCE, SESSION_MAX_AGE_H } from "../src/config";
 import { fetchAcceptedSubmissionForSync, resolveMeta } from "../src/lc-graphql";
 import {
   LC_ORIGIN,
+  collectionSlugFromSearch,
   isAcceptedVerdict,
   problemSlugFromPathname,
 } from "../src/lc-endpoints";
@@ -25,6 +26,25 @@ export default defineContentScript({
   runAt: "document_start",
   main() {
     let session: ProblemSession | null = null;
+    const submissionCollections = new Map<string, string | null>();
+    const MAX_SUBMISSION_CONTEXTS = 128;
+
+    function rememberSubmissionCollection(submissionId: string): void {
+      submissionCollections.set(submissionId, collectionSlugFromSearch(location.search));
+      while (submissionCollections.size > MAX_SUBMISSION_CONTEXTS) {
+        const oldestId = submissionCollections.keys().next().value;
+        if (oldestId === undefined) break;
+        submissionCollections.delete(oldestId);
+      }
+    }
+
+    function takeSubmissionCollection(submissionId: string): string | null {
+      const collection = submissionCollections.has(submissionId)
+        ? (submissionCollections.get(submissionId) ?? null)
+        : collectionSlugFromSearch(location.search);
+      submissionCollections.delete(submissionId);
+      return collection;
+    }
 
     function ensureSession(slug: string): ProblemSession {
       const now = Date.now();
@@ -89,9 +109,11 @@ export default defineContentScript({
         case "submission-created": {
           const s = ensureSession(msg.payload.slug);
           s.submitCount += 1;
+          rememberSubmissionCollection(msg.payload.id);
           console.log(`${LOG_PREFIX} soumission créée`, {
             id: msg.payload.id,
             slug: s.slug,
+            collectionSlug: submissionCollections.get(msg.payload.id) ?? null,
             submitCount: s.submitCount,
           });
           break;
@@ -100,16 +122,18 @@ export default defineContentScript({
           const { id, statusMsg, statusCode } = msg.payload;
           console.log(`${LOG_PREFIX} submission-result`, { id, statusMsg, statusCode });
           const accepted = isAcceptedVerdict(statusMsg, statusCode);
+          const collectionSlug = takeSubmissionCollection(id);
           if (accepted && session !== null) {
             const minutes = Math.round((Date.now() - session.startedAt) / 60_000);
             const snapshot = {
               slug: session.slug,
+              collectionSlug,
               submissionsInSession: session.submitCount,
               minutesInSession: minutes,
             };
             console.log(`${LOG_PREFIX} ✓ Accepted détecté`, snapshot);
-            void syncAcceptedToGithub(id, snapshot.slug).catch((err: unknown) =>
-              console.warn(`${LOG_PREFIX} GitHub sync`, err),
+            void syncAcceptedToGithub(id, snapshot.slug, snapshot.collectionSlug).catch(
+              (err: unknown) => console.warn(`${LOG_PREFIX} GitHub sync`, err),
             );
             handleAccepted(snapshot).catch((err: unknown) =>
               console.warn(`${LOG_PREFIX} handleAccepted`, err),
@@ -120,7 +144,11 @@ export default defineContentScript({
       }
     }
 
-    async function syncAcceptedToGithub(submissionId: string, slug: string): Promise<void> {
+    async function syncAcceptedToGithub(
+      submissionId: string,
+      slug: string,
+      collectionSlug: string | null,
+    ): Promise<void> {
       const status = await sendToBackground({ kind: "GITHUB_GET_STATUS" });
       if (!status.enabled) return;
 
@@ -129,7 +157,11 @@ export default defineContentScript({
         if (delayMs > 0) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
         }
-        submission = await fetchAcceptedSubmissionForSync(submissionId, slug);
+        submission = await fetchAcceptedSubmissionForSync(
+          submissionId,
+          slug,
+          collectionSlug,
+        );
         if (submission !== null) break;
       }
       if (submission === null) {

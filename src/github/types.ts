@@ -1,6 +1,7 @@
 export interface AcceptedSubmissionForSync {
   submissionId: string;
   slug: string;
+  collectionSlug: string | null;
   frontendId: string;
   title: string;
   language: string;

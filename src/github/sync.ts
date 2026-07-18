@@ -66,9 +66,17 @@ function metricLine(label: string, display: string | null, percentile: number | 
   return `${label}: ${display ?? "—"}${beats === null ? "" : ` · Beats ${beats}`}`;
 }
 
+/** Les éléments déjà en file avant cette fonctionnalité n'ont pas ce champ. */
+function collectionFolder(submission: AcceptedSubmissionForSync): string {
+  return typeof submission.collectionSlug === "string" && submission.collectionSlug.length > 0
+    ? safePathSegment(submission.collectionSlug)
+    : "solutions";
+}
+
 export function githubSolutionPath(submission: AcceptedSubmissionForSync): string {
   const extension = extensionFor(submission.language);
-  return `solutions/${problemFolder(submission.frontendId, submission.slug)}/solution.${extension}`;
+  const problem = problemFolder(submission.frontendId, submission.slug);
+  return `${collectionFolder(submission)}/${problem}/solution.${extension}`;
 }
 
 export function githubSolutionContent(submission: AcceptedSubmissionForSync): string {
@@ -85,6 +93,9 @@ export function githubSolutionContent(submission: AcceptedSubmissionForSync): st
     `https://leetcode.com/problems/${submission.slug}/`,
     `Accepted: ${submission.acceptedAt}`,
     `Language: ${submission.languageDisplay}`,
+    typeof submission.collectionSlug === "string"
+      ? `Collection: ${submission.collectionSlug}`
+      : null,
     runtime,
     memory,
     `Submission: https://leetcode.com/submissions/detail/${submission.submissionId}/`,

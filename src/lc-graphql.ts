@@ -157,6 +157,7 @@ export async function fetchQuestionMeta(slug: string): Promise<QuestionMeta | nu
 export async function fetchAcceptedSubmissionForSync(
   submissionId: string,
   expectedSlug: string,
+  collectionSlug: string | null,
 ): Promise<AcceptedSubmissionForSync | null> {
   if (!/^\d+$/.test(submissionId)) return null;
   const numericId = Number(submissionId);
@@ -178,13 +179,19 @@ export async function fetchAcceptedSubmissionForSync(
   if (!response.ok) return null;
 
   const json = (await response.json()) as SubmissionDetailsResponse;
-  return parseAcceptedSubmissionForSyncResponse(json, submissionId, expectedSlug);
+  return parseAcceptedSubmissionForSyncResponse(
+    json,
+    submissionId,
+    expectedSlug,
+    collectionSlug,
+  );
 }
 
 export function parseAcceptedSubmissionForSyncResponse(
   json: SubmissionDetailsResponse,
   submissionId: string,
   expectedSlug: string,
+  collectionSlug: string | null = null,
 ): AcceptedSubmissionForSync | null {
   const details = json.data?.submissionDetails;
   const question = details?.question;
@@ -211,6 +218,7 @@ export function parseAcceptedSubmissionForSyncResponse(
   return {
     submissionId,
     slug,
+    collectionSlug,
     frontendId,
     title,
     language,

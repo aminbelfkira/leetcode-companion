@@ -206,3 +206,15 @@ export function problemSlugFromPathname(pathname: string): string | null {
   const m = PROBLEM_PATH_RE.exec(pathname);
   return m?.[1] ?? null;
 }
+
+/**
+ * Contexte de liste/Study Plan exposé par LeetCode, par exemple :
+ * ?envType=study-plan-v2&envId=top-interview-150
+ */
+export function collectionSlugFromSearch(search: string): string | null {
+  const params = new URLSearchParams(search);
+  const envType = params.get("envType")?.trim();
+  const envId = params.get("envId")?.trim().toLowerCase();
+  if (!envType || !envId || !/^[a-z0-9][a-z0-9_-]{0,99}$/.test(envId)) return null;
+  return envId;
+}

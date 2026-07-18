@@ -10,6 +10,7 @@ import {
   syncSubmissionToGithub,
 } from "../src/github/sync";
 import type { AcceptedSubmissionForSync, GithubRepository } from "../src/github/types";
+import { collectionSlugFromSearch } from "../src/lc-endpoints";
 import { parseAcceptedSubmissionForSyncResponse } from "../src/lc-graphql";
 
 assert.equal(GITHUB_CLIENT_ID, "Iv23li2ck926gmzxSkow");
@@ -22,6 +23,7 @@ assert.equal(
 const cpp: AcceptedSubmissionForSync = {
   submissionId: "2071621585",
   slug: "remove-element",
+  collectionSlug: null,
   frontendId: "27",
   title: "Remove Element",
   language: "cpp",
@@ -43,6 +45,30 @@ assert.match(cppContent, /^\/\/ 27\. Remove Element/m);
 assert.match(cppContent, /^\/\/ Runtime: 0 ms · Beats 100%$/m);
 assert.match(cppContent, /^\/\/ Memory: 18\.2 MB · Beats 82\.35%$/m);
 assert.ok(cppContent.endsWith("class Solution { /* é */ };\n"));
+
+const topInterview = { ...cpp, collectionSlug: "top-interview-150" };
+assert.equal(
+  githubSolutionPath(topInterview),
+  "top-interview-150/0027-remove-element/solution.cpp",
+);
+assert.match(githubSolutionContent(topInterview), /^\/\/ Collection: top-interview-150$/m);
+
+const legacySubmission = { ...cpp } as Partial<AcceptedSubmissionForSync>;
+delete legacySubmission.collectionSlug;
+assert.equal(
+  githubSolutionPath(legacySubmission as AcceptedSubmissionForSync),
+  "solutions/0027-remove-element/solution.cpp",
+);
+
+assert.equal(
+  collectionSlugFromSearch("?envType=study-plan-v2&envId=top-interview-150"),
+  "top-interview-150",
+);
+assert.equal(collectionSlugFromSearch("?envType=study-plan-v2"), null);
+assert.equal(
+  collectionSlugFromSearch("?envType=study-plan-v2&envId=..%2Fprivate"),
+  null,
+);
 
 const python: AcceptedSubmissionForSync = {
   ...cpp,
@@ -86,8 +112,10 @@ const parsed = parseAcceptedSubmissionForSyncResponse(
   },
   "2071621585",
   "remove-element",
+  "top-interview-150",
 );
 assert.equal(parsed?.code, "const answer = 42;");
+assert.equal(parsed?.collectionSlug, "top-interview-150");
 assert.equal(parsed?.runtimePercentile, 99.5);
 assert.equal(parsed?.acceptedAt, "2026-07-19T12:00:00.000Z");
 assert.equal(

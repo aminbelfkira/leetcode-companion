@@ -269,14 +269,24 @@ export default defineBackground(() => {
     if (!/^[a-zA-Z0-9_+#.-]+$/.test(submission.language)) {
       throw new Error("Langage LeetCode invalide");
     }
+    const collectionSlug = (submission as { collectionSlug?: unknown }).collectionSlug;
+    if (
+      collectionSlug !== undefined &&
+      collectionSlug !== null &&
+      (typeof collectionSlug !== "string" ||
+        !/^[a-z0-9][a-z0-9_-]{0,99}$/.test(collectionSlug))
+    ) {
+      throw new Error("Contexte LeetCode invalide");
+    }
     if (submission.code.length === 0 || submission.code.length > 1_000_000) {
       throw new Error("Taille de solution invalide");
     }
-    return submission;
+    return { ...submission, collectionSlug: collectionSlug ?? null };
   }
 
   function githubQueueKey(submission: AcceptedSubmissionForSync): string {
-    return `${submission.slug}:${submission.language.toLowerCase()}`;
+    const collection = submission.collectionSlug ?? "solutions";
+    return `${collection}:${submission.slug}:${submission.language.toLowerCase()}`;
   }
 
   async function enqueueGithubSubmission(submission: AcceptedSubmissionForSync) {
