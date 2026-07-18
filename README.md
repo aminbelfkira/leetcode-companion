@@ -57,22 +57,16 @@ La synchronisation :
 - exclut credentials et code en attente de l'export FSRS ;
 - supprime token et file locale lorsque GitHub est déconnecté.
 
-### Configurer la GitHub App pour un build
+### GitHub App officielle
 
-Le build utilise le Device Flow d'une GitHub App : aucun `client_secret` ne doit être embarqué.
+Le build contient déjà le Client ID public et le slug de la
+[GitHub App LeetCode Companion](https://github.com/apps/leetcode-companion-aminbelfkira).
+Aucune variable d'environnement ni configuration manuelle n'est nécessaire, y compris pour un
+build local.
 
-1. Créer une GitHub App dans **Settings → Developer settings → GitHub Apps**.
-2. Désactiver les webhooks et activer **Device Flow**.
-3. Accorder uniquement la permission dépôt **Contents: Read and write**.
-4. Pour un usage sans reconnexion fréquente, laisser l'expiration des user-to-server tokens
-   désactivée.
-5. Copier `.env.example` vers `.env.local`, puis renseigner le Client ID public et le slug de l'app.
-6. Relancer `npm run build` et recharger l'extension.
-
-```dotenv
-WXT_GITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx
-WXT_GITHUB_APP_SLUG=leetcode-companion
-```
+La GitHub App utilise le Device Flow, n'a pas de webhook et ne demande que la permission dépôt
+**Contents: Read and write**. Aucun `client_secret` ni aucune clé privée n'est embarqué dans
+l'extension.
 
 L'utilisateur ouvre ensuite **GitHub Sync** depuis le popup, installe l'app sur un dépôt précis,
 saisit le code GitHub et sélectionne ce dépôt. Cette activation n'est faite qu'une fois.

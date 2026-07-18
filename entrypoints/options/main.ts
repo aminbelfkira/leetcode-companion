@@ -41,9 +41,9 @@ async function render(): Promise<void> {
     if (!current.available) {
       app.innerHTML = `
         <div class="panel warning">
-          <h2>GitHub App non configurée</h2>
-          <p>Ce build doit définir <code>WXT_GITHUB_CLIENT_ID</code> et
-          <code>WXT_GITHUB_APP_SLUG</code>. Les fonctions FSRS restent entièrement disponibles.</p>
+          <h2>GitHub Sync indisponible</h2>
+          <p>La configuration publique de la GitHub App est absente de ce build.
+          Les fonctions FSRS restent entièrement disponibles.</p>
         </div>`;
       return;
     }

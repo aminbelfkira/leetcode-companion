@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import {
+  GITHUB_APP_SLUG,
+  GITHUB_CLIENT_ID,
+  GITHUB_INSTALLATION_URL,
+} from "../src/github/config";
+import {
   githubSolutionContent,
   githubSolutionPath,
   syncSubmissionToGithub,
 } from "../src/github/sync";
 import type { AcceptedSubmissionForSync, GithubRepository } from "../src/github/types";
 import { parseAcceptedSubmissionForSyncResponse } from "../src/lc-graphql";
+
+assert.equal(GITHUB_CLIENT_ID, "Iv23li2ck926gmzxSkow");
+assert.equal(GITHUB_APP_SLUG, "leetcode-companion-aminbelfkira");
+assert.equal(
+  GITHUB_INSTALLATION_URL,
+  "https://github.com/apps/leetcode-companion-aminbelfkira/installations/new",
+);
 
 const cpp: AcceptedSubmissionForSync = {
   submissionId: "2071621585",
