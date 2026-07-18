@@ -56,6 +56,7 @@ commits Git.
 La synchronisation :
 
 - ne concerne que les Accepted effectués après l'activation ;
+- confirme chaque upload réussi dans LeetCode avec un accès direct au fichier GitHub ;
 - conserve les échecs réseau dans une file locale et réessaie toutes les 15 minutes ;
 - n'expose jamais le token GitHub au code de la page LeetCode ;
 - exclut credentials et code en attente de l'export FSRS ;

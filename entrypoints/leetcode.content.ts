@@ -2,6 +2,7 @@
 // session par problème, monte le panneau de notation sur Accepted.
 
 import { LOG_PREFIX, PAGE_MSG_SOURCE, SESSION_MAX_AGE_H } from "../src/config";
+import { githubFileUrl } from "../src/github/links";
 import { fetchAcceptedSubmissionForSync, resolveMeta } from "../src/lc-graphql";
 import {
   LC_ORIGIN,
@@ -12,6 +13,7 @@ import {
 import { sendToBackground } from "../src/messaging";
 import { getCards, getSettings } from "../src/storage";
 import { removeBanner, renderBanner } from "../src/ui/banner";
+import { showGithubSyncToast } from "../src/ui/github-sync-toast";
 import { isPanelMounted, mountPanel } from "../src/ui/panel";
 import type { PageMessage } from "../src/types";
 
@@ -176,6 +178,18 @@ export default defineContentScript({
         `${LOG_PREFIX} GitHub ${result.synced ? "synchronisé" : "mis en attente"}`,
         result.path === null ? { pendingCount: result.pendingCount } : { path: result.path },
       );
+      if (result.synced && result.path !== null && status.repository !== null) {
+        const repository = status.repository;
+        const url = githubFileUrl(repository, result.path);
+        showGithubSyncToast(
+          { repository: repository.fullName, path: result.path },
+          {
+            onOpen: () => {
+              window.open(url, "_blank", "noopener,noreferrer");
+            },
+          },
+        );
+      }
     }
 
     /** §9.1 — métadonnées, cooldown, panneau de notation. */

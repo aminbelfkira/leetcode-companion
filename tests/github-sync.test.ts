@@ -9,6 +9,7 @@ import {
   githubSolutionPath,
   syncSubmissionToGithub,
 } from "../src/github/sync";
+import { githubFileUrl } from "../src/github/links";
 import type { AcceptedSubmissionForSync, GithubRepository } from "../src/github/types";
 import { collectionSlugFromSearch } from "../src/lc-endpoints";
 import { parseAcceptedSubmissionForSyncResponse } from "../src/lc-graphql";
@@ -136,6 +137,11 @@ const repository: GithubRepository = {
   defaultBranch: "main",
   private: true,
 };
+
+assert.equal(
+  githubFileUrl(repository, "top-interview-150/0027-remove-element/solution.cpp"),
+  "https://github.com/aminbelfkira/leetcode-solutions/blob/main/top-interview-150/0027-remove-element/solution.cpp",
+);
 
 const originalFetch = globalThis.fetch;
 const requests: Array<{ url: string; init: RequestInit }> = [];
