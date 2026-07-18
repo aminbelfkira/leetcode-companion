@@ -1,5 +1,13 @@
 // Modèle de données (§6) + protocole d'événements page (§5.4).
 
+import type {
+  AcceptedSubmissionForSync,
+  GithubDeviceFlowPoll,
+  GithubDeviceFlowStart,
+  GithubRepository,
+  GithubSyncStatus,
+} from "./github/types";
+
 export type Mode = "seul" | "aide" | "abandon";
 export type Feel = 1 | 2 | 3 | 4; // 1 fluide · 2 correct · 3 laborieux · 4 à l'arraché
 
@@ -81,6 +89,14 @@ export type RuntimeRequest =
   | { kind: "SET_PENDING_ACCEPTED"; pending: PendingAccepted }
   | { kind: "CLEAR_PENDING_ACCEPTED" }
   | { kind: "SNOOZE_BANNER" }
+  | { kind: "GITHUB_GET_STATUS" }
+  | { kind: "GITHUB_START_DEVICE_FLOW" }
+  | { kind: "GITHUB_POLL_DEVICE_FLOW" }
+  | { kind: "GITHUB_LIST_REPOSITORIES" }
+  | { kind: "GITHUB_SELECT_REPOSITORY"; repositoryId: number }
+  | { kind: "GITHUB_DISCONNECT" }
+  | { kind: "GITHUB_RETRY_QUEUE" }
+  | { kind: "GITHUB_SYNC_SUBMISSION"; submission: AcceptedSubmissionForSync }
   | {
       kind: "UPDATE_CARD_META"; // §10 — répare une carte metaIncomplete
       slug: string;
@@ -97,6 +113,18 @@ export interface RuntimeResponseMap {
   CLEAR_PENDING_ACCEPTED: { ok: true };
   SNOOZE_BANNER: { ok: true };
   UPDATE_CARD_META: { ok: true };
+  GITHUB_GET_STATUS: GithubSyncStatus;
+  GITHUB_START_DEVICE_FLOW: GithubDeviceFlowStart;
+  GITHUB_POLL_DEVICE_FLOW: GithubDeviceFlowPoll;
+  GITHUB_LIST_REPOSITORIES: { repositories: GithubRepository[] };
+  GITHUB_SELECT_REPOSITORY: GithubSyncStatus;
+  GITHUB_DISCONNECT: GithubSyncStatus;
+  GITHUB_RETRY_QUEUE: GithubSyncStatus;
+  GITHUB_SYNC_SUBMISSION: {
+    synced: boolean;
+    pendingCount: number;
+    path: string | null;
+  };
 }
 
 export type RuntimeResponse<K extends RuntimeRequest["kind"]> =

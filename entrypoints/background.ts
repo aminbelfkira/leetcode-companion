@@ -4,12 +4,39 @@
 import {
   ALARM_BADGE_DAILY,
   ALARM_BADGE_PERIODIC,
+  ALARM_GITHUB_RETRY,
   BADGE_COLOR,
   DAILY_ALARM_HOUR,
   DAILY_ALARM_MINUTE,
+  GITHUB_RETRY_MINUTES,
   LOG_PREFIX,
 } from "../src/config";
 import { gradeFor, nextState } from "../src/fsrs";
+import {
+  listGithubRepositories,
+  pollGithubDeviceFlow,
+  startGithubDeviceFlow,
+} from "../src/github/api";
+import { GITHUB_PERMISSION_ORIGINS } from "../src/github/config";
+import {
+  clearGithubData,
+  getGithubAuth,
+  getGithubDeviceFlow,
+  getGithubQueue,
+  getGithubSyncState,
+  getGithubSyncStatus,
+  markGithubSynced,
+  setGithubAuth,
+  setGithubDeviceFlow,
+  setGithubLastError,
+  setGithubQueue,
+  setGithubRepository,
+} from "../src/github/storage";
+import { githubSolutionPath, syncSubmissionToGithub } from "../src/github/sync";
+import type {
+  AcceptedSubmissionForSync,
+  GithubDeviceFlowPoll,
+} from "../src/github/types";
 import {
   getCards,
   getLog,
@@ -42,9 +69,17 @@ export default defineBackground(() => {
     when: nextDailyAlarmTime(),
     periodInMinutes: 24 * 60,
   });
+  void browser.alarms.create(ALARM_GITHUB_RETRY, {
+    periodInMinutes: GITHUB_RETRY_MINUTES,
+  });
   browser.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === ALARM_BADGE_PERIODIC || alarm.name === ALARM_BADGE_DAILY) {
       void updateBadge();
+    }
+    if (alarm.name === ALARM_GITHUB_RETRY) {
+      void serializedGithub(flushGithubQueue).catch((err: unknown) =>
+        console.warn(`${LOG_PREFIX} GitHub retry`, err),
+      );
     }
   });
 
@@ -78,6 +113,18 @@ export default defineBackground(() => {
     writeQueue = next.catch(() => undefined);
     return next;
   }
+
+  // Les appels réseau GitHub restent ordonnés sans bloquer les écritures FSRS.
+  let githubQueue: Promise<unknown> = Promise.resolve();
+  function serializedGithub<T>(fn: () => Promise<T>): Promise<T> {
+    const next = githubQueue.then(fn);
+    githubQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  void serializedGithub(flushGithubQueue).catch((err: unknown) =>
+    console.warn(`${LOG_PREFIX} GitHub reprise`, err),
+  );
 
   browser.runtime.onMessage.addListener(
     (message: unknown, _sender, sendResponse: (response: unknown) => void) => {
@@ -127,6 +174,160 @@ export default defineBackground(() => {
           await setSettings({ ...settings, bannerSnoozedUntil: midnight.toISOString() });
           return { ok: true } as const;
         });
+      case "GITHUB_GET_STATUS":
+        return getGithubSyncStatus();
+      case "GITHUB_START_DEVICE_FLOW":
+        return serializedGithub(startDeviceAuthorization);
+      case "GITHUB_POLL_DEVICE_FLOW":
+        return serializedGithub(pollDeviceAuthorization);
+      case "GITHUB_LIST_REPOSITORIES":
+        return serializedGithub(async () => ({
+          repositories: await accessibleGithubRepositories(),
+        }));
+      case "GITHUB_SELECT_REPOSITORY":
+        return serializedGithub(async () => {
+          const repositories = await accessibleGithubRepositories();
+          const selected = repositories.find((repository) => repository.id === msg.repositoryId);
+          if (selected === undefined) throw new Error("Dépôt GitHub inaccessible");
+          await setGithubRepository(selected);
+          await flushGithubQueue();
+          return getGithubSyncStatus();
+        });
+      case "GITHUB_DISCONNECT":
+        return serializedGithub(disconnectGithub);
+      case "GITHUB_RETRY_QUEUE":
+        return serializedGithub(async () => {
+          await flushGithubQueue();
+          return getGithubSyncStatus();
+        });
+      case "GITHUB_SYNC_SUBMISSION":
+        return serializedGithub(() => enqueueGithubSubmission(msg.submission));
+    }
+  }
+
+  async function startDeviceAuthorization() {
+    const { public: publicFlow, stored } = await startGithubDeviceFlow();
+    await setGithubDeviceFlow(stored);
+    return publicFlow;
+  }
+
+  async function pollDeviceAuthorization(): Promise<GithubDeviceFlowPoll> {
+    const flow = await getGithubDeviceFlow();
+    if (flow === null) throw new Error("Connexion GitHub expirée, recommencez");
+    const result = await pollGithubDeviceFlow(flow);
+    switch (result.state) {
+      case "authorized":
+        await setGithubAuth(result.auth);
+        await setGithubDeviceFlow(null);
+        await setGithubLastError(null);
+        return { state: "connected", userLogin: result.auth.userLogin };
+      case "pending":
+        await setGithubDeviceFlow({
+          ...flow,
+          nextPollAt: Date.now() + result.retryAfterSeconds * 1_000,
+        });
+        return result;
+      case "slow_down": {
+        const retryAfterSeconds = result.retryAfterSeconds;
+        await setGithubDeviceFlow({
+          ...flow,
+          intervalSeconds: retryAfterSeconds,
+          nextPollAt: Date.now() + retryAfterSeconds * 1_000,
+        });
+        return { state: "pending", retryAfterSeconds };
+      }
+      case "expired":
+      case "denied":
+        await setGithubDeviceFlow(null);
+        return result;
+      case "connected":
+        return result;
+    }
+  }
+
+  async function accessibleGithubRepositories() {
+    const auth = await getGithubAuth();
+    if (auth === null) throw new Error("GitHub n'est pas connecté");
+    return listGithubRepositories(auth.accessToken);
+  }
+
+  async function disconnectGithub() {
+    await clearGithubData();
+    try {
+      await browser.permissions.remove({ origins: [...GITHUB_PERMISSION_ORIGINS] });
+    } catch {
+      // La suppression des données suffit ; le retrait de permission est un bonus.
+    }
+    return getGithubSyncStatus();
+  }
+
+  function validateGithubSubmission(
+    submission: AcceptedSubmissionForSync,
+  ): AcceptedSubmissionForSync {
+    if (!/^\d+$/.test(submission.submissionId)) throw new Error("ID de soumission invalide");
+    if (!/^[a-z0-9-]+$/.test(submission.slug)) throw new Error("Slug LeetCode invalide");
+    if (!/^[a-zA-Z0-9_+#.-]+$/.test(submission.language)) {
+      throw new Error("Langage LeetCode invalide");
+    }
+    if (submission.code.length === 0 || submission.code.length > 1_000_000) {
+      throw new Error("Taille de solution invalide");
+    }
+    return submission;
+  }
+
+  function githubQueueKey(submission: AcceptedSubmissionForSync): string {
+    return `${submission.slug}:${submission.language.toLowerCase()}`;
+  }
+
+  async function enqueueGithubSubmission(submission: AcceptedSubmissionForSync) {
+    const status = await getGithubSyncStatus();
+    if (!status.enabled) {
+      return { synced: false, pendingCount: status.pendingCount, path: null } as const;
+    }
+    const valid = validateGithubSubmission(submission);
+    const key = githubQueueKey(valid);
+    const queue = await getGithubQueue();
+    queue[key] = { ...valid, queuedAt: new Date().toISOString() };
+    await setGithubQueue(queue);
+    await setGithubLastError(null);
+    await flushGithubQueue();
+    const remaining = await getGithubQueue();
+    const synced = remaining[key] === undefined;
+    return {
+      synced,
+      pendingCount: Object.keys(remaining).length,
+      path: synced ? githubSolutionPath(valid) : null,
+    };
+  }
+
+  async function flushGithubQueue(): Promise<void> {
+    const [auth, state, queue] = await Promise.all([
+      getGithubAuth(),
+      getGithubSyncState(),
+      getGithubQueue(),
+    ]);
+    if (auth === null || state.repository === null) return;
+
+    const entries = Object.entries(queue).sort(([, a], [, b]) =>
+      a.queuedAt.localeCompare(b.queuedAt),
+    );
+    for (const [key, submission] of entries) {
+      try {
+        const path = await syncSubmissionToGithub(
+          auth.accessToken,
+          state.repository,
+          submission,
+        );
+        delete queue[key];
+        await setGithubQueue(queue);
+        await markGithubSynced(path);
+        console.log(`${LOG_PREFIX} GitHub synchronisé`, { path });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await setGithubLastError(message);
+        console.warn(`${LOG_PREFIX} GitHub en attente`, { message });
+        break;
+      }
     }
   }
 

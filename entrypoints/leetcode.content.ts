@@ -2,7 +2,7 @@
 // session par problème, monte le panneau de notation sur Accepted.
 
 import { LOG_PREFIX, PAGE_MSG_SOURCE, SESSION_MAX_AGE_H } from "../src/config";
-import { resolveMeta } from "../src/lc-graphql";
+import { fetchAcceptedSubmissionForSync, resolveMeta } from "../src/lc-graphql";
 import {
   LC_ORIGIN,
   isAcceptedVerdict,
@@ -108,6 +108,9 @@ export default defineContentScript({
               minutesInSession: minutes,
             };
             console.log(`${LOG_PREFIX} ✓ Accepted détecté`, snapshot);
+            void syncAcceptedToGithub(id, snapshot.slug).catch((err: unknown) =>
+              console.warn(`${LOG_PREFIX} GitHub sync`, err),
+            );
             handleAccepted(snapshot).catch((err: unknown) =>
               console.warn(`${LOG_PREFIX} handleAccepted`, err),
             );
@@ -115,6 +118,32 @@ export default defineContentScript({
           break;
         }
       }
+    }
+
+    async function syncAcceptedToGithub(submissionId: string, slug: string): Promise<void> {
+      const status = await sendToBackground({ kind: "GITHUB_GET_STATUS" });
+      if (!status.enabled) return;
+
+      let submission = null;
+      for (const delayMs of [0, 500, 1_500]) {
+        if (delayMs > 0) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+        }
+        submission = await fetchAcceptedSubmissionForSync(submissionId, slug);
+        if (submission !== null) break;
+      }
+      if (submission === null) {
+        throw new Error("Le détail de la soumission Accepted est indisponible");
+      }
+
+      const result = await sendToBackground({
+        kind: "GITHUB_SYNC_SUBMISSION",
+        submission,
+      });
+      console.log(
+        `${LOG_PREFIX} GitHub ${result.synced ? "synchronisé" : "mis en attente"}`,
+        result.path === null ? { pendingCount: result.pendingCount } : { path: result.path },
+      );
     }
 
     /** §9.1 — métadonnées, cooldown, panneau de notation. */

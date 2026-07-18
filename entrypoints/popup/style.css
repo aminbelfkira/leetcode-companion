@@ -235,3 +235,50 @@ footer {
   display: flex;
   justify-content: center;
 }
+
+.github-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.github-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.github-copy .section-title {
+  margin-bottom: 2px;
+}
+
+.github-repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.github-ok,
+.github-pending,
+.github-error,
+.github-copy > .muted {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+.github-ok {
+  color: var(--ok);
+}
+
+.github-pending {
+  color: var(--lc);
+}
+
+.github-error {
+  color: var(--due);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

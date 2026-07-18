@@ -2,6 +2,7 @@
 // À appeler depuis le content ISOLATED (même origine, cookies inclus).
 
 import { GRAPHQL_URL } from "./lc-endpoints";
+import type { AcceptedSubmissionForSync } from "./github/types";
 import type { ProblemCard } from "./types";
 
 export interface QuestionMeta {
@@ -20,6 +21,30 @@ const QUERY = `query questionMeta($titleSlug: String!) {
   }
 }`;
 
+const SUBMISSION_DETAILS_QUERY = `query submissionDetails($submissionId: Int!) {
+  submissionDetails(submissionId: $submissionId) {
+    runtime
+    runtimeDisplay
+    runtimePercentile
+    memory
+    memoryDisplay
+    memoryPercentile
+    code
+    timestamp
+    statusCode
+    lang {
+      name
+      verboseName
+    }
+    question {
+      questionId
+      questionFrontendId
+      title
+      titleSlug
+    }
+  }
+}`;
+
 interface GraphqlResponse {
   data?: {
     question?: {
@@ -31,9 +56,64 @@ interface GraphqlResponse {
   };
 }
 
+interface SubmissionDetailsResponse {
+  data?: {
+    submissionDetails?: {
+      runtime?: unknown;
+      runtimeDisplay?: unknown;
+      runtimePercentile?: unknown;
+      memory?: unknown;
+      memoryDisplay?: unknown;
+      memoryPercentile?: unknown;
+      code?: unknown;
+      timestamp?: unknown;
+      statusCode?: unknown;
+      lang?: { name?: unknown; verboseName?: unknown } | null;
+      question?: {
+        questionId?: unknown;
+        questionFrontendId?: unknown;
+        title?: unknown;
+        titleSlug?: unknown;
+      } | null;
+    } | null;
+  };
+}
+
 function csrfToken(): string | null {
   const m = /(?:^|;\s*)csrftoken=([^;]+)/.exec(document.cookie);
   return m?.[1] ?? null;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function acceptedTimestamp(value: unknown): string {
+  const numeric = optionalNumber(value);
+  if (numeric !== null) {
+    const millis = numeric < 10_000_000_000 ? numeric * 1_000 : numeric;
+    const date = new Date(millis);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  if (typeof value === "string") {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function displayMetric(display: unknown, raw: unknown, suffix: string): string | null {
+  const formatted = optionalString(display);
+  if (formatted !== null) return formatted;
+  const value = optionalString(raw) ?? (typeof raw === "number" ? String(raw) : null);
+  return value === null ? null : `${value} ${suffix}`;
 }
 
 function parseDifficulty(value: unknown): ProblemCard["lcDifficulty"] {
@@ -67,6 +147,80 @@ export async function fetchQuestionMeta(slug: string): Promise<QuestionMeta | nu
     title: q.title,
     lcDifficulty: parseDifficulty(q.difficulty),
     metaIncomplete: false,
+  };
+}
+
+/**
+ * Lit le code uniquement après un Accepted et uniquement à l'appel explicite
+ * du content script lorsque GitHub Sync est actif.
+ */
+export async function fetchAcceptedSubmissionForSync(
+  submissionId: string,
+  expectedSlug: string,
+): Promise<AcceptedSubmissionForSync | null> {
+  if (!/^\d+$/.test(submissionId)) return null;
+  const numericId = Number(submissionId);
+  if (!Number.isSafeInteger(numericId) || numericId < 0) return null;
+
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const csrf = csrfToken();
+  if (csrf !== null) headers["x-csrftoken"] = csrf;
+  const response = await fetch(GRAPHQL_URL, {
+    method: "POST",
+    credentials: "same-origin",
+    headers,
+    body: JSON.stringify({
+      operationName: "submissionDetails",
+      query: SUBMISSION_DETAILS_QUERY,
+      variables: { submissionId: numericId },
+    }),
+  });
+  if (!response.ok) return null;
+
+  const json = (await response.json()) as SubmissionDetailsResponse;
+  return parseAcceptedSubmissionForSyncResponse(json, submissionId, expectedSlug);
+}
+
+export function parseAcceptedSubmissionForSyncResponse(
+  json: SubmissionDetailsResponse,
+  submissionId: string,
+  expectedSlug: string,
+): AcceptedSubmissionForSync | null {
+  const details = json.data?.submissionDetails;
+  const question = details?.question;
+  const lang = details?.lang;
+  const statusCode = optionalNumber(details?.statusCode);
+  const slug = optionalString(question?.titleSlug);
+  const title = optionalString(question?.title);
+  const frontendId =
+    optionalString(question?.questionFrontendId) ?? optionalString(question?.questionId);
+  const language = optionalString(lang?.name);
+  const languageDisplay = optionalString(lang?.verboseName) ?? language;
+  if (
+    statusCode !== 10 ||
+    slug !== expectedSlug ||
+    title === null ||
+    frontendId === null ||
+    language === null ||
+    languageDisplay === null ||
+    typeof details?.code !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    submissionId,
+    slug,
+    frontendId,
+    title,
+    language,
+    languageDisplay,
+    code: details.code,
+    runtimeDisplay: displayMetric(details.runtimeDisplay, details.runtime, "ms"),
+    runtimePercentile: optionalNumber(details.runtimePercentile),
+    memoryDisplay: displayMetric(details.memoryDisplay, details.memory, "MB"),
+    memoryPercentile: optionalNumber(details.memoryPercentile),
+    acceptedAt: acceptedTimestamp(details.timestamp),
   };
 }
 

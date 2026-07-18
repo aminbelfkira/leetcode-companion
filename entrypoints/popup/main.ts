@@ -7,6 +7,7 @@ import { formatDueRelative } from "../../src/fsrs";
 import { LC_ORIGIN, problemSlugFromPathname } from "../../src/lc-endpoints";
 import { sendToBackground } from "../../src/messaging";
 import { getAllData } from "../../src/storage";
+import type { GithubSyncStatus } from "../../src/github/types";
 import type { Feel, Mode, PendingAccepted, ProblemCard, ReviewInput } from "../../src/types";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -55,7 +56,10 @@ async function render(): Promise<void> {
   if (!app) return;
   pendingMode = null;
   pendingFeel = null;
-  const data = await getAllData();
+  const [data, github] = await Promise.all([
+    getAllData(),
+    sendToBackground({ kind: "GITHUB_GET_STATUS" }).catch(() => null),
+  ]);
   const now = new Date();
   const nowMs = now.getTime();
   const todayMid = midnight(now);
@@ -146,6 +150,8 @@ async function render(): Promise<void> {
     `);
   }
 
+  if (github !== null) parts.push(githubBlockHtml(github));
+
   parts.push(`
     <footer>
       <button class="btn" data-export>Exporter (JSON)</button>
@@ -154,6 +160,37 @@ async function render(): Promise<void> {
 
   app.innerHTML = parts.join("");
   wire(data.cards, data.pendingAccepted);
+}
+
+function githubBlockHtml(status: GithubSyncStatus): string {
+  if (status.enabled && status.repository !== null) {
+    const detail =
+      status.lastError !== null
+        ? `<span class="github-error">en attente · ${esc(status.lastError)}</span>`
+        : status.pendingCount > 0
+          ? `<span class="github-pending">${status.pendingCount} en attente</span>`
+          : `<span class="github-ok">synchronisation active</span>`;
+    return `
+      <div class="card github-card">
+        <div class="github-copy">
+          <div class="section-title">GitHub Sync</div>
+          <div class="github-repo">${esc(status.repository.fullName)}</div>
+          ${detail}
+        </div>
+        <button class="btn" data-github-settings>Gérer</button>
+      </div>`;
+  }
+  return `
+    <div class="card github-card">
+      <div class="github-copy">
+        <div class="section-title">GitHub Sync</div>
+        <div class="github-repo">Sauvegarder les Accepted automatiquement</div>
+        <span class="muted">activation unique</span>
+      </div>
+      <button class="btn${status.available ? " primary" : ""}" data-github-settings>
+        ${status.connected ? "Terminer" : "Activer"}
+      </button>
+    </div>`;
 }
 
 // --- Bloc « Noter le dernier Accepted » (§9.2) ------------------------------
@@ -251,6 +288,10 @@ function wire(cards: Record<string, ProblemCard>, pending: PendingAccepted | nul
 
   app.querySelector<HTMLButtonElement>("[data-export]")?.addEventListener("click", () => {
     void exportJson();
+  });
+
+  app.querySelector<HTMLButtonElement>("[data-github-settings]")?.addEventListener("click", () => {
+    void browser.runtime.openOptionsPage();
   });
 
   if (pending !== null) {

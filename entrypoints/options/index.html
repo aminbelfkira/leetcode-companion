@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="manifest.open-in-tab" content="true" />
+    <title>LeetCode Companion · GitHub Sync</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">LeetCode Companion</div>
+        <h1>GitHub Sync</h1>
+        <p>Une activation, puis chaque nouvelle solution Accepted est synchronisée automatiquement.</p>
+      </header>
+      <section id="app" aria-live="polite"></section>
+      <aside>
+        Le code est demandé à LeetCode uniquement après un Accepted et seulement lorsque GitHub
+        Sync est actif. Aucun token ni code n'est envoyé à un serveur LeetCode Companion.
+      </aside>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

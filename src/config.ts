@@ -13,3 +13,7 @@ export const ALARM_BADGE_DAILY = "lcfsrs-badge-daily";
 /** Alarme quotidienne à 00:05 locale (§8). */
 export const DAILY_ALARM_HOUR = 0;
 export const DAILY_ALARM_MINUTE = 5;
+
+/** Retente les commits GitHub restés en file après une coupure réseau. */
+export const ALARM_GITHUB_RETRY = "lcfsrs-github-retry";
+export const GITHUB_RETRY_MINUTES = 15;
