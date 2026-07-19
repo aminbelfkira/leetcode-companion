@@ -63,6 +63,29 @@ async function render(): Promise<void> {
 
 function renderDisconnected(current: GithubSyncStatus): void {
   if (app === null) return;
+  if (current.repository !== null || current.pendingCount > 0) {
+    const repository = current.repository?.fullName ?? "Dépôt GitHub configuré";
+    const error =
+      current.lastError === null
+        ? "La session GitHub doit être renouvelée."
+        : current.lastError;
+    app.innerHTML = `
+      <div class="panel warning">
+        <div class="status-line paused"><span class="status-dot"></span> Synchronisation en pause</div>
+        <h2>Reconnecter GitHub</h2>
+        <p>Le dépôt et les solutions en attente sont conservés. Une reconnexion suffit pour reprendre automatiquement.</p>
+        <dl>
+          <div><dt>Dépôt</dt><dd>${escapeHtml(repository)}</dd></div>
+          <div><dt>En attente</dt><dd>${current.pendingCount}</dd></div>
+        </dl>
+        <div class="sync-error"><b>Connexion requise</b><span>${escapeHtml(error)}</span></div>
+        <div class="actions">
+          <button class="primary" data-connect>Reconnecter GitHub</button>
+        </div>
+      </div>`;
+    bindConnectButton();
+    return;
+  }
   app.innerHTML = `
     <div class="steps">
       <div class="panel step">
@@ -92,7 +115,11 @@ function renderDisconnected(current: GithubSyncStatus): void {
       void browser.tabs.create({ url: current.installationUrl });
     }
   });
-  app.querySelector<HTMLButtonElement>("[data-connect]")?.addEventListener("click", (event) => {
+  bindConnectButton();
+}
+
+function bindConnectButton(): void {
+  app?.querySelector<HTMLButtonElement>("[data-connect]")?.addEventListener("click", (event) => {
     const button = event.currentTarget as HTMLButtonElement;
     button.disabled = true;
     void connectGithub().catch(renderError);
@@ -143,7 +170,9 @@ async function pollAuthorization(): Promise<void> {
         return;
       case "connected":
         repositories = [];
-        showRepositoryPicker = true;
+        // Une reconnexion conserve le dépôt ; une première connexion ouvrira naturellement
+        // le sélecteur puisque current.enabled sera encore false.
+        showRepositoryPicker = false;
         await render();
         return;
       case "expired":

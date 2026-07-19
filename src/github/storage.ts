@@ -27,11 +27,25 @@ async function read<T>(key: string): Promise<T | null> {
 }
 
 export async function getGithubAuth(): Promise<GithubAuthRecord | null> {
-  return read<GithubAuthRecord>(AUTH_KEY);
+  const auth = await read<GithubAuthRecord>(AUTH_KEY);
+  if (auth === null) return null;
+  // Compatibilité avec les versions qui ne conservaient que accessToken.
+  return {
+    ...auth,
+    expiresAt: typeof auth.expiresAt === "string" ? auth.expiresAt : null,
+    refreshToken: typeof auth.refreshToken === "string" ? auth.refreshToken : null,
+    refreshTokenExpiresAt:
+      typeof auth.refreshTokenExpiresAt === "string" ? auth.refreshTokenExpiresAt : null,
+  };
 }
 
 export async function setGithubAuth(auth: GithubAuthRecord): Promise<void> {
   await browser.storage.local.set({ [AUTH_KEY]: auth });
+}
+
+/** Oublie uniquement la session GitHub ; dépôt et solutions en attente sont préservés. */
+export async function clearGithubAuth(): Promise<void> {
+  await browser.storage.local.remove(AUTH_KEY);
 }
 
 export async function getGithubSyncState(): Promise<GithubSyncState> {

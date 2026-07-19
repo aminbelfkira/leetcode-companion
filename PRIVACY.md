@@ -18,11 +18,12 @@ soumission Accepted, l'extension demande à LeetCode le détail de cette soumiss
 runtime, mémoire et percentiles disponibles. Ces informations sont envoyées directement depuis
 l'extension vers l'API GitHub afin de mettre à jour le dépôt choisi par l'utilisateur.
 
-Aucun code ni token ne transite par un serveur LeetCode Companion. Le token GitHub, le dépôt choisi
-et les éventuels commits en attente sont conservés localement. Le token n'est jamais injecté dans
-la page LeetCode et n'est pas inclus dans l'export JSON des données FSRS.
+Aucun code ni token ne transite par un serveur LeetCode Companion. Les tokens GitHub d'accès et de
+renouvellement, le dépôt choisi et les éventuels commits en attente sont conservés localement. Les
+tokens sont renouvelés directement auprès de GitHub, ne sont jamais injectés dans la page LeetCode
+et ne sont pas inclus dans l'export JSON des données FSRS.
 
-La déconnexion GitHub supprime le token et la file de synchronisation locale. Les commits déjà
+La déconnexion GitHub supprime les tokens et la file de synchronisation locale. Les commits déjà
 créés dans le dépôt GitHub ne sont pas supprimés.
 
 ## Services contactés

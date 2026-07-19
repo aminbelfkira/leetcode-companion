@@ -62,6 +62,11 @@ export interface GithubQueueItem extends AcceptedSubmissionForSync {
 
 export interface GithubAuthRecord {
   accessToken: string;
+  /** Null lorsque l'expiration des user tokens est désactivée sur la GitHub App. */
+  expiresAt: string | null;
+  /** Rotatif : GitHub en renvoie un nouveau à chaque renouvellement. */
+  refreshToken: string | null;
+  refreshTokenExpiresAt: string | null;
   tokenType: string;
   userLogin: string;
   connectedAt: string;

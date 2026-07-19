@@ -23,6 +23,14 @@ export class GithubApiError extends Error {
   }
 }
 
+/** Le token ne peut plus être renouvelé : une nouvelle autorisation utilisateur est requise. */
+export class GithubReauthorizationRequiredError extends Error {
+  constructor(message = "La connexion GitHub a expiré. Reconnectez GitHub pour reprendre la synchronisation.") {
+    super(message);
+    this.name = "GithubReauthorizationRequiredError";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -39,6 +47,70 @@ function requiredNumber(value: unknown, field: string): number {
     throw new Error(`Réponse GitHub invalide (${field})`);
   }
   return value;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function expirationFromNow(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  const seconds = requiredNumber(value, field);
+  if (seconds <= 0) throw new Error(`Réponse GitHub invalide (${field})`);
+  return new Date(Date.now() + seconds * 1_000).toISOString();
+}
+
+function oauthErrorMessage(body: Record<string, unknown>): string {
+  if (typeof body.error_description === "string" && body.error_description.length > 0) {
+    return body.error_description;
+  }
+  return typeof body.error === "string" ? body.error : "Réponse OAuth GitHub invalide";
+}
+
+function authFromTokenResponse(
+  body: Record<string, unknown>,
+  userLogin: string,
+  connectedAt: string,
+): GithubAuthRecord {
+  const accessToken = requiredString(body.access_token, "access_token");
+  const expiresAt = expirationFromNow(body.expires_in, "expires_in");
+  const refreshToken = optionalString(body.refresh_token);
+  const refreshTokenExpiresAt = expirationFromNow(
+    body.refresh_token_expires_in,
+    "refresh_token_expires_in",
+  );
+  if (expiresAt !== null && refreshToken === null) {
+    throw new Error("Réponse GitHub invalide (refresh_token)");
+  }
+  if (refreshToken !== null && refreshTokenExpiresAt === null) {
+    throw new Error("Réponse GitHub invalide (refresh_token_expires_in)");
+  }
+  const tokenType =
+    typeof body.token_type === "string" && body.token_type.length > 0
+      ? body.token_type
+      : "bearer";
+  return {
+    accessToken,
+    expiresAt,
+    refreshToken,
+    refreshTokenExpiresAt,
+    tokenType,
+    userLogin,
+    connectedAt,
+  };
+}
+
+export function githubAuthNeedsRefresh(
+  auth: GithubAuthRecord,
+  now = Date.now(),
+  skewMilliseconds = 5 * 60 * 1_000,
+): boolean {
+  // Les anciens enregistrements ne possèdent pas encore expiresAt : leur premier 401
+  // déclenchera une reconnexion qui préservera la file locale.
+  if (typeof auth.expiresAt !== "string") return false;
+  const expiresAt = Date.parse(auth.expiresAt);
+  if (!Number.isFinite(expiresAt)) return true;
+  return expiresAt <= now + Math.max(0, skewMilliseconds);
 }
 
 async function responseError(response: Response): Promise<GithubApiError> {
@@ -155,22 +227,56 @@ export async function pollGithubDeviceFlow(
   }
 
   const accessToken = requiredString(body.access_token, "access_token");
-  const tokenType =
-    typeof body.token_type === "string" && body.token_type.length > 0
-      ? body.token_type
-      : "bearer";
   const user = await githubApiJson<unknown>("/user", accessToken);
   if (!isRecord(user)) throw new Error("Profil GitHub invalide");
   const userLogin = requiredString(user.login, "user.login");
   return {
     state: "authorized",
-    auth: {
-      accessToken,
-      tokenType,
-      userLogin,
-      connectedAt: new Date().toISOString(),
-    },
+    auth: authFromTokenResponse(body, userLogin, new Date().toISOString()),
   };
+}
+
+/**
+ * Renouvelle un user access token créé par Device Flow.
+ * GitHub n'exige pas de client_secret dans ce cas, ce qui convient à une extension publique.
+ */
+export async function refreshGithubUserAccessToken(
+  auth: GithubAuthRecord,
+): Promise<GithubAuthRecord> {
+  if (typeof auth.refreshToken !== "string" || auth.refreshToken.length === 0) {
+    throw new GithubReauthorizationRequiredError();
+  }
+  if (typeof auth.refreshTokenExpiresAt === "string") {
+    const refreshExpiresAt = Date.parse(auth.refreshTokenExpiresAt);
+    if (!Number.isFinite(refreshExpiresAt) || refreshExpiresAt <= Date.now()) {
+      throw new GithubReauthorizationRequiredError();
+    }
+  }
+
+  const response = await fetch(GITHUB_ACCESS_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      client_id: GITHUB_CLIENT_ID,
+      grant_type: "refresh_token",
+      refresh_token: auth.refreshToken,
+    }),
+  });
+  if (!response.ok) throw await responseError(response);
+  const body = (await response.json()) as unknown;
+  if (!isRecord(body)) throw new Error("Réponse GitHub refresh invalide");
+  if (typeof body.error === "string") {
+    const message = oauthErrorMessage(body);
+    if (["bad_refresh_token", "expired_token", "access_denied"].includes(body.error)) {
+      throw new GithubReauthorizationRequiredError(message);
+    }
+    throw new Error(message);
+  }
+
+  return authFromTokenResponse(body, auth.userLogin, auth.connectedAt);
 }
 
 export async function listGithubRepositories(token: string): Promise<GithubRepository[]> {

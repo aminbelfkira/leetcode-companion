@@ -13,12 +13,17 @@ import {
 } from "../src/config";
 import { gradeFor, nextState } from "../src/fsrs";
 import {
+  GithubApiError,
+  GithubReauthorizationRequiredError,
+  githubAuthNeedsRefresh,
   listGithubRepositories,
   pollGithubDeviceFlow,
+  refreshGithubUserAccessToken,
   startGithubDeviceFlow,
 } from "../src/github/api";
 import { GITHUB_PERMISSION_ORIGINS } from "../src/github/config";
 import {
+  clearGithubAuth,
   clearGithubData,
   getGithubAuth,
   getGithubDeviceFlow,
@@ -35,6 +40,7 @@ import {
 import { githubSolutionPath, syncSubmissionToGithub } from "../src/github/sync";
 import type {
   AcceptedSubmissionForSync,
+  GithubAuthRecord,
   GithubDeviceFlowPoll,
 } from "../src/github/types";
 import {
@@ -57,6 +63,9 @@ import type {
 } from "../src/types";
 
 export default defineBackground(() => {
+  const githubReauthorizationMessage =
+    "La connexion GitHub a expiré. Reconnectez GitHub pour reprendre la synchronisation.";
+
   console.log(`${LOG_PREFIX} background démarré`);
 
   void migrateIfNeeded()
@@ -220,6 +229,8 @@ export default defineBackground(() => {
         await setGithubAuth(result.auth);
         await setGithubDeviceFlow(null);
         await setGithubLastError(null);
+        // Une reconnexion après expiration conserve le dépôt et la file : on reprend ici.
+        await flushGithubQueue();
         return { state: "connected", userLogin: result.auth.userLogin };
       case "pending":
         await setGithubDeviceFlow({
@@ -245,10 +256,54 @@ export default defineBackground(() => {
     }
   }
 
-  async function accessibleGithubRepositories() {
-    const auth = await getGithubAuth();
+  async function requireGithubReauthorization(): Promise<never> {
+    // Ne jamais utiliser clearGithubData ici : le dépôt et le code en attente doivent survivre.
+    await clearGithubAuth();
+    await setGithubLastError(githubReauthorizationMessage);
+    throw new GithubReauthorizationRequiredError(githubReauthorizationMessage);
+  }
+
+  async function refreshStoredGithubAuth(auth: GithubAuthRecord): Promise<GithubAuthRecord> {
+    try {
+      const refreshed = await refreshGithubUserAccessToken(auth);
+      // Le refresh token est rotatif : le nouvel enregistrement remplace atomiquement l'ancien.
+      await setGithubAuth(refreshed);
+      return refreshed;
+    } catch (error) {
+      if (error instanceof GithubReauthorizationRequiredError) {
+        return requireGithubReauthorization();
+      }
+      throw error;
+    }
+  }
+
+  async function withGithubAuthentication<T>(
+    operation: (accessToken: string) => Promise<T>,
+  ): Promise<T> {
+    let auth = await getGithubAuth();
     if (auth === null) throw new Error("GitHub n'est pas connecté");
-    return listGithubRepositories(auth.accessToken);
+    if (githubAuthNeedsRefresh(auth)) auth = await refreshStoredGithubAuth(auth);
+
+    try {
+      return await operation(auth.accessToken);
+    } catch (error) {
+      if (!(error instanceof GithubApiError) || error.status !== 401) throw error;
+    }
+
+    // Le token peut avoir été révoqué ou avoir expiré entre deux requêtes.
+    auth = await refreshStoredGithubAuth(auth);
+    try {
+      return await operation(auth.accessToken);
+    } catch (error) {
+      if (error instanceof GithubApiError && error.status === 401) {
+        return requireGithubReauthorization();
+      }
+      throw error;
+    }
+  }
+
+  async function accessibleGithubRepositories() {
+    return withGithubAuthentication(listGithubRepositories);
   }
 
   async function disconnectGithub() {
@@ -317,16 +372,19 @@ export default defineBackground(() => {
       getGithubQueue(),
     ]);
     if (auth === null || state.repository === null) return;
+    const repository = state.repository;
 
     const entries = Object.entries(queue).sort(([, a], [, b]) =>
       a.queuedAt.localeCompare(b.queuedAt),
     );
     for (const [key, submission] of entries) {
       try {
-        const path = await syncSubmissionToGithub(
-          auth.accessToken,
-          state.repository,
-          submission,
+        const path = await withGithubAuthentication((accessToken) =>
+          syncSubmissionToGithub(
+            accessToken,
+            repository,
+            submission,
+          ),
         );
         delete queue[key];
         await setGithubQueue(queue);

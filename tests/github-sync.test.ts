@@ -1,16 +1,27 @@
 import assert from "node:assert/strict";
 import {
+  GITHUB_ACCESS_TOKEN_URL,
   GITHUB_APP_SLUG,
   GITHUB_CLIENT_ID,
   GITHUB_INSTALLATION_URL,
 } from "../src/github/config";
+import {
+  GithubReauthorizationRequiredError,
+  githubAuthNeedsRefresh,
+  pollGithubDeviceFlow,
+  refreshGithubUserAccessToken,
+} from "../src/github/api";
 import {
   githubSolutionContent,
   githubSolutionPath,
   syncSubmissionToGithub,
 } from "../src/github/sync";
 import { githubFileUrl } from "../src/github/links";
-import type { AcceptedSubmissionForSync, GithubRepository } from "../src/github/types";
+import type {
+  AcceptedSubmissionForSync,
+  GithubAuthRecord,
+  GithubRepository,
+} from "../src/github/types";
 import { collectionSlugFromSearch } from "../src/lc-endpoints";
 import { parseAcceptedSubmissionForSyncResponse } from "../src/lc-graphql";
 
@@ -20,6 +31,112 @@ assert.equal(
   GITHUB_INSTALLATION_URL,
   "https://github.com/apps/leetcode-companion-aminbelfkira/installations/new",
 );
+
+const authNow = Date.now();
+const renewableAuth: GithubAuthRecord = {
+  accessToken: "ghu_old",
+  expiresAt: new Date(authNow + 60_000).toISOString(),
+  refreshToken: "ghr_old",
+  refreshTokenExpiresAt: new Date(authNow + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+  tokenType: "bearer",
+  userLogin: "aminbelfkira",
+  connectedAt: new Date(authNow - 60_000).toISOString(),
+};
+assert.equal(githubAuthNeedsRefresh(renewableAuth, authNow, 2 * 60_000), true);
+assert.equal(
+  githubAuthNeedsRefresh(
+    { ...renewableAuth, expiresAt: new Date(authNow + 10 * 60_000).toISOString() },
+    authNow,
+    2 * 60_000,
+  ),
+  false,
+);
+assert.equal(githubAuthNeedsRefresh({ ...renewableAuth, expiresAt: null }, authNow), false);
+
+const authOriginalFetch = globalThis.fetch;
+const oauthBodies: URLSearchParams[] = [];
+try {
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === GITHUB_ACCESS_TOKEN_URL) {
+      const params = new URLSearchParams(String(init.body));
+      oauthBodies.push(params);
+      if (params.get("refresh_token") === "ghr_bad") {
+        return new Response(
+          JSON.stringify({
+            error: "bad_refresh_token",
+            error_description: "The refresh token is invalid.",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      const refreshing = params.get("grant_type") === "refresh_token";
+      return new Response(
+        JSON.stringify({
+          access_token: refreshing ? "ghu_refreshed" : "ghu_initial",
+          expires_in: 28_800,
+          refresh_token: refreshing ? "ghr_rotated" : "ghr_initial",
+          refresh_token_expires_in: 15_897_600,
+          token_type: "bearer",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url === "https://api.github.com/user") {
+      return new Response(JSON.stringify({ login: "aminbelfkira" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`URL GitHub inattendue dans le test : ${url}`);
+  };
+
+  const authorization = await pollGithubDeviceFlow({
+    deviceCode: "device-code",
+    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    intervalSeconds: 5,
+    nextPollAt: 0,
+  });
+  assert.equal(authorization.state, "authorized");
+  if (authorization.state !== "authorized") assert.fail("Autorisation GitHub attendue");
+  assert.equal(authorization.auth.accessToken, "ghu_initial");
+  assert.equal(authorization.auth.refreshToken, "ghr_initial");
+  assert.ok(Date.parse(authorization.auth.expiresAt ?? "") > Date.now() + 28_700_000);
+  assert.ok(
+    Date.parse(authorization.auth.refreshTokenExpiresAt ?? "") >
+      Date.now() + 15_800_000_000,
+  );
+
+  const refreshed = await refreshGithubUserAccessToken(authorization.auth);
+  assert.equal(refreshed.accessToken, "ghu_refreshed");
+  assert.equal(refreshed.refreshToken, "ghr_rotated");
+  assert.equal(refreshed.userLogin, authorization.auth.userLogin);
+  assert.equal(refreshed.connectedAt, authorization.auth.connectedAt);
+  assert.equal(oauthBodies[0]?.get("grant_type"), "urn:ietf:params:oauth:grant-type:device_code");
+  assert.equal(oauthBodies[1]?.get("grant_type"), "refresh_token");
+  assert.equal(oauthBodies[1]?.get("refresh_token"), "ghr_initial");
+  assert.equal(oauthBodies[1]?.has("client_secret"), false);
+
+  await assert.rejects(
+    () =>
+      refreshGithubUserAccessToken({
+        ...refreshed,
+        refreshToken: "ghr_bad",
+      }),
+    (error: unknown) => error instanceof GithubReauthorizationRequiredError,
+  );
+  await assert.rejects(
+    () =>
+      refreshGithubUserAccessToken({
+        ...refreshed,
+        refreshToken: null,
+        refreshTokenExpiresAt: null,
+      }),
+    (error: unknown) => error instanceof GithubReauthorizationRequiredError,
+  );
+} finally {
+  globalThis.fetch = authOriginalFetch;
+}
 
 const cpp: AcceptedSubmissionForSync = {
   submissionId: "2071621585",

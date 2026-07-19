@@ -276,13 +276,15 @@ function githubBlockHtml(status: GithubSyncStatus): string {
   const detail = status.available
     ? status.connected
       ? "Terminer la configuration"
-      : "Sauvegarder automatiquement les Accepted"
+      : status.repository !== null || status.pendingCount > 0
+        ? `Reconnecter GitHub${status.pendingCount > 0 ? ` · ${status.pendingCount} en attente` : ""}`
+        : "Sauvegarder automatiquement les Accepted"
     : "Configuration indisponible";
   return `
     <button class="sync-strip" data-options>
       <span class="sync-icon">${ICONS.github}</span>
       <span class="sync-copy">
-        <span class="sync-title">GitHub Sync</span>
+        <span class="sync-title">${esc(status.repository?.fullName ?? "GitHub Sync")}</span>
         <span class="sync-state">${detail}</span>
       </span>
       <span class="row-chevron">${ICONS.chevron}</span>

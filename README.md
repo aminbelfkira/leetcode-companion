@@ -58,6 +58,7 @@ La synchronisation :
 - ne concerne que les Accepted effectués après l'activation ;
 - confirme chaque upload réussi dans LeetCode avec un accès direct au fichier GitHub ;
 - conserve les échecs réseau dans une file locale et réessaie toutes les 15 minutes ;
+- renouvelle automatiquement les tokens GitHub expirables sans nouvelle action de l'utilisateur ;
 - n'expose jamais le token GitHub au code de la page LeetCode ;
 - exclut credentials et code en attente de l'export FSRS ;
 - supprime token et file locale lorsque GitHub est déconnecté.
@@ -70,8 +71,8 @@ Aucune variable d'environnement ni configuration manuelle n'est nécessaire, y c
 build local.
 
 La GitHub App utilise le Device Flow, n'a pas de webhook et ne demande que la permission dépôt
-**Contents: Read and write**. Aucun `client_secret` ni aucune clé privée n'est embarqué dans
-l'extension.
+**Contents: Read and write**. Les tokens expirables sont renouvelés localement via le Device Flow.
+Aucun `client_secret` ni aucune clé privée n'est embarqué dans l'extension.
 
 L'utilisateur ouvre ensuite **GitHub Sync** depuis le popup, installe l'app sur un dépôt précis,
 saisit le code GitHub et sélectionne ce dépôt. Cette activation n'est faite qu'une fois.

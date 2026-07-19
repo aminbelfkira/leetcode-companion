@@ -47,6 +47,8 @@ label { display: grid; gap: 7px; margin: 18px 0; color: var(--muted); font-size:
 select { width: 100%; color: var(--ink); background: var(--card2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
 .status-line { color: var(--green); font-size: 12px; font-weight: 650; margin-bottom: 12px; }
 .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 5px; }
+.status-line.paused { color: var(--orange); }
+.status-line.paused .status-dot { background: var(--orange); }
 dl { margin: 18px 0; border-top: 1px solid var(--line); }
 dl div { display: grid; grid-template-columns: 180px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 dt { color: var(--muted); }
