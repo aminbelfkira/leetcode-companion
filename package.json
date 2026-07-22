@@ -9,7 +9,7 @@
     "build": "wxt build",
     "zip": "wxt zip",
     "compile": "tsc --noEmit",
-    "test": "vite-node tests/github-sync.test.ts",
+    "test": "vite-node tests/github-sync.test.ts && vite-node tests/review-reset.test.ts",
     "postinstall": "wxt prepare"
   },
   "dependencies": {

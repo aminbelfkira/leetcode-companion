@@ -34,6 +34,11 @@ Le bouton « Run » n'est pas interprété comme une soumission.
 Le popup permet également de reprendre un Accepted fermé sans notation, d'abandonner une révision
 et d'exporter les cartes et le journal au format JSON.
 
+Lorsqu'un problème dû est ouvert depuis le popup ou le bandeau Companion, l'éditeur retrouve
+automatiquement le code initial de LeetCode : la classe et la signature de fonction restent en
+place, tandis que l'ancienne solution est retirée. Les visites ordinaires ne modifient jamais le
+contenu de l'éditeur.
+
 ## GitHub Sync
 
 Une fois activée, chaque nouvelle soumission Accepted met à jour :

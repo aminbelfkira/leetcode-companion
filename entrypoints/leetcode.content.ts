@@ -5,16 +5,17 @@ import { LOG_PREFIX, PAGE_MSG_SOURCE, SESSION_MAX_AGE_H } from "../src/config";
 import { githubFileUrl } from "../src/github/links";
 import { fetchAcceptedSubmissionForSync, resolveMeta } from "../src/lc-graphql";
 import {
-  LC_ORIGIN,
   collectionSlugFromSearch,
   isAcceptedVerdict,
   problemSlugFromPathname,
+  reviewProblemUrl,
 } from "../src/lc-endpoints";
 import { sendToBackground } from "../src/messaging";
 import { getCards, getSettings } from "../src/storage";
 import { removeBanner, renderBanner } from "../src/ui/banner";
 import { showGithubSyncToast } from "../src/ui/github-sync-toast";
 import { isPanelMounted, mountPanel } from "../src/ui/panel";
+import { resetEditorForCompanionReview } from "../src/ui/review-reset";
 import type { PageMessage } from "../src/types";
 
 interface ProblemSession {
@@ -27,6 +28,8 @@ export default defineContentScript({
   matches: ["*://leetcode.com/*"],
   runAt: "document_start",
   main() {
+    resetEditorForCompanionReview();
+
     let session: ProblemSession | null = null;
     const submissionCollections = new Map<string, string | null>();
     const MAX_SUBMISSION_CONTEXTS = 128;
@@ -294,7 +297,7 @@ export default defineContentScript({
             next: { slug: oldest.slug, frontendId: oldest.frontendId, title: oldest.title },
           },
           {
-            onOpen: (slug) => location.assign(`${LC_ORIGIN}/problems/${slug}/`),
+            onOpen: (slug) => location.assign(reviewProblemUrl(slug)),
             onSnooze: () => {
               void sendToBackground({ kind: "SNOOZE_BANNER" }).catch((err: unknown) =>
                 console.warn(`${LOG_PREFIX} snooze`, err),

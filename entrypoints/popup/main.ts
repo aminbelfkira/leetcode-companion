@@ -4,7 +4,11 @@
 import { browser } from "wxt/browser";
 import { LOG_PREFIX } from "../../src/config";
 import { formatDueRelative } from "../../src/fsrs";
-import { LC_ORIGIN, problemSlugFromPathname } from "../../src/lc-endpoints";
+import {
+  LC_ORIGIN,
+  problemSlugFromPathname,
+  reviewProblemUrl,
+} from "../../src/lc-endpoints";
 import { sendToBackground } from "../../src/messaging";
 import { getAllData } from "../../src/storage";
 import type { GithubSyncStatus } from "../../src/github/types";
@@ -43,10 +47,6 @@ function modeLabel(mode: Mode): string {
     case "abandon":
       return "abandonné";
   }
-}
-
-function problemUrl(slug: string): string {
-  return `${LC_ORIGIN}/problems/${slug}/`;
 }
 
 function cardMetaHtml(card: ProblemCard): string {
@@ -367,7 +367,7 @@ function wire(cards: Record<string, ProblemCard>, pending: PendingAccepted | nul
   app.querySelectorAll<HTMLButtonElement>("[data-open]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const slug = btn.getAttribute("data-open");
-      if (slug !== null) void browser.tabs.create({ url: problemUrl(slug) });
+      if (slug !== null) void browser.tabs.create({ url: reviewProblemUrl(slug) });
     });
   });
 

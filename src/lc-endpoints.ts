@@ -3,6 +3,26 @@
 
 export const LC_ORIGIN = "https://leetcode.com";
 
+/** Marque une navigation initiée explicitement depuis la file de révision Companion. */
+export const REVIEW_LAUNCH_PARAM = "lcCompanionReview";
+
+export function reviewProblemUrl(slug: string): string {
+  const url = new URL(`${LC_ORIGIN}/problems/${encodeURIComponent(slug)}/`);
+  url.searchParams.set(REVIEW_LAUNCH_PARAM, "1");
+  return url.toString();
+}
+
+export function isReviewLaunchSearch(search: string): boolean {
+  return new URLSearchParams(search).get(REVIEW_LAUNCH_PARAM) === "1";
+}
+
+/** URL relative nettoyée pour history.replaceState après le reset réussi ou abandonné. */
+export function withoutReviewLaunchMarker(href: string): string {
+  const url = new URL(href, LC_ORIGIN);
+  url.searchParams.delete(REVIEW_LAUNCH_PARAM);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 /** POST /problems/{slug}/submit/ → { submission_id: number } — vraie soumission. */
 export const SUBMIT_URL_RE =
   /^(?:https?:\/\/leetcode\.com)?\/problems\/([^/]+)\/submit\/?(?:\?.*)?$/;
