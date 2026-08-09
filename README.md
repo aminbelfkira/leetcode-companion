@@ -2,7 +2,7 @@
 
 Fork de **[aminbelfkira/leetcode-companion](https://github.com/aminbelfkira/leetcode-companion)**,
 porté de LeetCode vers **[neetcode.io](https://neetcode.io)**, et de Chrome vers **Safari sur
-macOS** sans cesser de fonctionner dans Chrome.
+macOS**.
 
 Seul le volet flashcards du projet d'origine est repris :
 
@@ -14,8 +14,7 @@ Seul le volet flashcards du projet d'origine est repris :
 Le volet GitHub Sync de l'original n'est pas porté, NeetCode intégrant déjà sa propre
 synchronisation GitHub.
 
-Tout est local : aucun compte, aucun serveur, aucune télémétrie. Le code source des solutions
-n'est ni lu, ni stocké, ni transmis.
+Tout fonctionne localement. Le code source des solutions n'est ni lu, ni stocké, ni transmis.
 
 ## Installation
 
@@ -35,19 +34,16 @@ npm run build
 1. ouvrir `chrome://extensions`, ou `edge://extensions` sur Edge ;
 2. activer **Mode développeur**, en haut à droite ;
 3. cliquer sur **Charger l'extension non empaquetée** ;
-4. sélectionner le dossier **`output/chrome-mv3`**, pas la racine du projet ;
+4. sélectionner le dossier **`output/chrome-mv3`** ;
 5. ouvrir [neetcode.io](https://neetcode.io), se connecter, résoudre un problème.
 
 L'icône verte apparaît dans la barre d'outils et le badge indique le nombre de révisions dues.
-Aucun chemin du projet ne dépend du système d'exploitation : Windows se comporte comme macOS.
 
-Firefox n'est pas supporté : son implémentation de MV3 attend un `background.scripts` là où ce
-manifeste déclare un `service_worker`.
+Firefox n'est pour l'instant pas supporté
 
 ### Safari (macOS)
 
-Safari n'accepte que des extensions empaquetées dans une application, donc Xcode est obligatoire.
-Une seule fois, dans un Terminal, avec le mot de passe administrateur :
+Si c'est la première fois que vous utilisez Xcode, pensez à faire :
 
 ```bash
 sudo xcodebuild -license accept
@@ -59,8 +55,7 @@ Puis, à la racine du projet :
 npm run safari
 ```
 
-Le script construit l'extension, la convertit en projet Xcode dans `output/safari`, la compile, et
-affiche le chemin de l'application produite. Ensuite, dans Safari :
+Le script construit l'extension, la convertit en projet Xcode dans `output/safari`, la compile, et affiche le chemin de l'application produite. Ensuite, dans Safari :
 
 1. ouvrir une fois l'application construite, par double-clic ;
 2. Réglages, Avancé, cocher **Afficher les fonctionnalités pour développeurs web** ;
@@ -132,33 +127,3 @@ un repli sur le `h1` et la pastille de difficulté de la page si l'appel échoue
 | Seul, 3 « laborieux »    | Hard                      |
 | Seul, 2 « correct »      | Good                      |
 | Seul, 1 « fluide »       | Easy                      |
-
-Les pas courts des flashcards, une minute puis dix minutes, sont désactivés : une révision est
-toujours planifiée à la journée. Les réglages se trouvent dans la page d'options de l'extension.
-
-L'intervalle maximum est un plafond approximatif. ts-fsrs l'applique à chaque grade puis rétablit
-l'ordre Again, Hard, Good, Easy, ce qui peut le dépasser de quelques jours.
-
-## Tests
-
-```bash
-npm test
-```
-
-46 tests couvrent la détection des soumissions, dont le « Run » ignoré et le cas SQL, la lecture
-des verdicts, le mapping ressenti vers grade, la planification FSRS, et le cycle complet
-d'écriture d'une review sur un storage simulé par `fakeBrowser`.
-
-## Limites connues
-
-- NeetCode désactive « Run » et « Submit » hors connexion : rien à détecter sur une session
-  anonyme.
-- Le panneau ne s'ouvre qu'une fois par problème et par fenêtre anti-doublon, huit heures par
-  défaut. Fermé sans notation, l'Accepted reste rattrapable depuis le popup.
-- Le bandeau se superpose à la barre de navigation NeetCode. « Plus tard » le masque jusqu'au
-  lendemain.
-- Safari ignore `options_ui.open_in_tab`, ce que signale le convertisseur. La page de réglages
-  reste accessible, mais dans la présentation propre à Safari.
-- La réinitialisation de l'éditeur à l'ouverture d'une révision, présente dans le projet
-  d'origine, n'est pas reprise : NeetCode persiste le code par onglet et l'écraser serait
-  destructif.
