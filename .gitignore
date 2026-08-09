@@ -1,2 +1,5 @@
-build/
+node_modules/
+output/
+.wxt/
 .DS_Store
+*.log
