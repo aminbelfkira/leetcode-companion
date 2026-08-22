@@ -82,6 +82,19 @@ export async function requestBackupDirectoryPermission(): Promise<BackupDirector
   return { state, directoryName: handle.name };
 }
 
+/** Lit le backup connu sans jamais créer ni modifier de fichier. */
+export async function readExistingBackup(
+  handle: FileSystemDirectoryHandle,
+): Promise<string | null> {
+  try {
+    const fileHandle = await handle.getFileHandle(BACKUP_FILENAME);
+    return await (await fileHandle.getFile()).text();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotFoundError") return null;
+    throw error;
+  }
+}
+
 export async function writeBackupToDirectory(snapshot: BackupSnapshot): Promise<void> {
   const handle = await getBackupDirectoryHandle();
   if (handle === null) throw new Error("Aucun dossier de sauvegarde n'est sélectionné.");

@@ -5,10 +5,12 @@ import {
   BACKUP_FILENAME,
   forgetBackupDirectoryHandle,
   getBackupDirectoryStatus,
+  readExistingBackup,
   requestBackupDirectoryPermission,
   saveBackupDirectoryHandle,
   type BackupDirectoryStatus,
 } from "../../src/backup-directory";
+import { mergeBackup } from "../../src/backup";
 import { LOG_PREFIX } from "../../src/config";
 import { formatDueRelative } from "../../src/fsrs";
 import { sendToBackground } from "../../src/messaging";
@@ -224,6 +226,19 @@ async function render(): Promise<void> {
           : ""
       }
     </div>
+
+    <dialog class="backup-dialog" data-existing-backup-dialog>
+      <form method="dialog">
+        <div class="eyebrow">SAUVEGARDE DÉTECTÉE</div>
+        <h2>Un fichier existe déjà</h2>
+        <p data-existing-backup-copy></p>
+        <div class="dialog-actions">
+          <button class="primary" value="import">Oui, importer</button>
+          <button value="replace">Non, remplacer</button>
+          <button class="quiet" value="cancel">Annuler</button>
+        </div>
+      </form>
+    </dialog>
   `;
 
   wire(settings);
@@ -243,6 +258,23 @@ function readForm(settings: Settings): Settings {
   next.arracheCountsAsAgain =
     app.querySelector<HTMLInputElement>('[data-setting="arracheCountsAsAgain"]')?.checked ?? false;
   return next;
+}
+
+function askExistingBackupAction(directoryName: string): Promise<"import" | "replace" | "cancel"> {
+  const dialog = app?.querySelector<HTMLDialogElement>("[data-existing-backup-dialog]");
+  const copy = dialog?.querySelector<HTMLElement>("[data-existing-backup-copy]");
+  if (dialog === undefined || dialog === null || copy === undefined || copy === null) {
+    return Promise.resolve("cancel");
+  }
+  copy.textContent = `${BACKUP_FILENAME} existe déjà dans « ${directoryName} ». Veux-tu importer et fusionner son contenu avec les données actuelles ?`;
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => {
+      resolve(dialog.returnValue === "import" || dialog.returnValue === "replace"
+        ? dialog.returnValue
+        : "cancel");
+    }, { once: true });
+    dialog.showModal();
+  });
 }
 
 function wire(settings: Settings): void {
@@ -329,6 +361,19 @@ function wire(settings: Settings): void {
         mode: "readwrite",
         startIn: "documents",
       });
+      const existingBackup = await readExistingBackup(handle);
+      const action = existingBackup === null
+        ? "replace"
+        : await askExistingBackupAction(handle.name);
+      if (action === "cancel") return null;
+
+      let importData: unknown = null;
+      if (action === "import" && existingBackup !== null) {
+        importData = JSON.parse(existingBackup) as unknown;
+        // Valide intégralement avant de mémoriser le dossier ou de toucher au fichier existant.
+        mergeBackup(importData, await getAllData());
+      }
+
       await saveBackupDirectoryHandle(handle);
       await sendToBackground({
         kind: "SAVE_SETTINGS",
@@ -338,8 +383,14 @@ function wire(settings: Settings): void {
           automaticBackupLastError: null,
         },
       });
+      if (action === "import") {
+        const summary = await sendToBackground({ kind: "IMPORT_BACKUP", data: importData });
+        return `Sauvegarde importée et activée dans « ${handle.name} » : ${summary.cardsAdded} carte(s) ajoutée(s), ${summary.cardsUpdated} fusionnée(s).`;
+      }
       await sendToBackground({ kind: "WRITE_BACKUP_NOW" });
-      return `Sauvegarde activée dans « ${handle.name} ». `;
+      return existingBackup === null
+        ? `Sauvegarde activée dans « ${handle.name} ».`
+        : `${BACKUP_FILENAME} a été remplacé dans « ${handle.name} ».`;
     });
   });
 

@@ -29,6 +29,8 @@ Le bouton **Réglages** du popup ouvre la section **Sauvegardes** :
 - **Importer un JSON** accepte les exports Companion actuels et ceux des anciennes extensions ;
 - l'import fusionne les cartes, les sources et l'historique sans supprimer les données présentes ;
 - **Choisir un dossier** active une sauvegarde automatique dans le dossier sélectionné ;
+- si ce dossier contient déjà `companion-backup.json`, Companion propose de l'importer et de le
+  fusionner, ou de le remplacer avec les données courantes ;
 - après chaque révision, `companion-backup.json` est réécrit avec l'état complet ;
 - l'export manuel horodaté reste disponible dans le popup et dans les réglages.
 

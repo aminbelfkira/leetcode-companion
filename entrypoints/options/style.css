@@ -255,6 +255,50 @@ code {
   font-size: 12px;
 }
 
+.backup-dialog {
+  width: min(480px, calc(100vw - 32px));
+  padding: 0;
+  color: var(--nc-text);
+  background: #1c1c1c;
+  border: 1px solid var(--nc-border);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+
+.backup-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(2px);
+}
+
+.backup-dialog form {
+  padding: 22px;
+}
+
+.backup-dialog h2 {
+  margin-top: 4px;
+  font-size: 19px;
+}
+
+.backup-dialog p {
+  margin-top: 10px;
+  color: var(--nc-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 20px;
+}
+
+.dialog-actions .quiet {
+  margin-left: auto;
+  color: var(--nc-text-secondary);
+  background: transparent;
+}
+
 @media (max-width: 560px) {
   .data-actions {
     align-items: flex-start;
