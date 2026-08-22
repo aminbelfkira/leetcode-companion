@@ -9,6 +9,7 @@ import {
   DAILY_ALARM_MINUTE,
   LOG_PREFIX,
 } from "../src/config";
+import { maybeWriteAutomaticBackup, writeBackupNow } from "../src/automatic-backup";
 import {
   checkCooldown,
   dueCards,
@@ -21,6 +22,7 @@ import {
 } from "../src/review";
 import {
   getCards,
+  importBackup,
   migrateIfNeeded,
   setPendingAccepted,
 } from "../src/storage";
@@ -100,6 +102,7 @@ export default defineBackground(() => {
         return serialized(async () => {
           const result = await logReview(msg.review);
           await updateBadge();
+          await maybeWriteAutomaticBackup();
           return result;
         });
       case "SET_PENDING_ACCEPTED":
@@ -128,6 +131,15 @@ export default defineBackground(() => {
           await updateBadge();
           return { ok: true } as const;
         });
+      case "IMPORT_BACKUP":
+        return serialized(async () => {
+          const result = await importBackup(msg.data);
+          await updateBadge();
+          await maybeWriteAutomaticBackup();
+          return result;
+        });
+      case "WRITE_BACKUP_NOW":
+        return serialized(writeBackupNow);
     }
   }
 });

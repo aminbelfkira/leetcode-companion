@@ -19,8 +19,25 @@ Ce projet fusionne les workflows de
 - restaure le code initial de l'éditeur LeetCode lorsqu'une révision est lancée depuis Companion ;
 - migre automatiquement les anciennes cartes NeetCode au premier démarrage.
 
-Tout le planning reste dans `chrome.storage.local`. Le code des solutions n'est ni lu, ni stocké,
-ni envoyé.
+Tout le planning reste dans `chrome.storage.local` — ce ne sont pas des cookies. Le code des
+solutions n'est ni lu, ni stocké, ni envoyé.
+
+## Import et sauvegarde locale
+
+Le bouton **Réglages** du popup ouvre la section **Sauvegardes** :
+
+- **Importer un JSON** accepte les exports Companion actuels et ceux des anciennes extensions ;
+- l'import fusionne les cartes, les sources et l'historique sans supprimer les données présentes ;
+- **Choisir un dossier** active une sauvegarde automatique dans le dossier sélectionné ;
+- après chaque révision, `companion-backup.json` est réécrit avec l'état complet ;
+- l'export manuel horodaté reste disponible dans le popup et dans les réglages.
+
+Le dossier est choisi avec l'API File System Access de Chrome. Son autorisation est mémorisée
+localement par l'extension ; si Chrome la suspend après un redémarrage, le bouton **Réautoriser**
+la réactive. **Oublier le dossier** coupe le lien sans supprimer le fichier déjà créé.
+
+`chrome.storage.local` survit au nettoyage de l'historique et du cache, mais pas à la désinstallation
+de l'extension. Le fichier automatique sert précisément de copie indépendante dans ce cas.
 
 ## Fusion des noms sans doublons
 
@@ -108,6 +125,7 @@ src/
   lc-endpoints.ts lc-meta.ts        détection et métadonnées LeetCode
   nc-endpoints.ts nc-meta.ts        détection et métadonnées NeetCode
   review.ts storage.ts              FSRS, migration et carte multi-plateforme
+  backup.ts backup-directory.ts     import fusionné et sauvegarde dans un dossier choisi
   ui/                               panneau, bandeau et reset LeetCode
 tests/
 ```

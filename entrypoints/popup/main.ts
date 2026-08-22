@@ -415,10 +415,10 @@ function wire(cards: Record<string, ProblemCard>, pending: PendingAccepted | nul
   }
 }
 
-/** Export : { schemaVersion, cards, log, settings }, horodaté. */
+/** Export complet horodaté ; l'import et l'auto-sauvegarde sont dans les réglages. */
 async function exportJson(): Promise<void> {
-  const { schemaVersion, cards, log, settings } = await getAllData();
-  const blob = new Blob([JSON.stringify({ schemaVersion, cards, log, settings }, null, 2)], {
+  const data = await getAllData();
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
   });
   const stamp = new Date()

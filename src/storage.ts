@@ -1,8 +1,10 @@
 // Accès typé à browser.storage.local. Les mutations sont réservées au background.
 
 import { browser } from "wxt/browser";
+import { mergeBackup } from "./backup";
 import { preferredProblemId, sourceFromDescriptor } from "./problem-identity";
 import type {
+  ImportSummary,
   Difficulty,
   PendingAccepted,
   Platform,
@@ -20,6 +22,10 @@ export const DEFAULT_SETTINGS: Settings = {
   maximumIntervalDays: 180,
   arracheCountsAsAgain: false,
   bannerSnoozedUntil: null,
+  automaticBackupEnabled: false,
+  automaticBackupDirectoryName: null,
+  automaticBackupLastAt: null,
+  automaticBackupLastError: null,
 };
 
 export interface StorageShape {
@@ -84,6 +90,13 @@ export async function setPendingAccepted(pending: PendingAccepted | null): Promi
 
 export async function setSettings(settings: Settings): Promise<void> {
   await browser.storage.local.set({ settings });
+}
+
+export async function importBackup(data: unknown): Promise<ImportSummary> {
+  const current = await getAllData();
+  const { snapshot, summary } = mergeBackup(data, current);
+  await browser.storage.local.set(snapshot);
+  return summary;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

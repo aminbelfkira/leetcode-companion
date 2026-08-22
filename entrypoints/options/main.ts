@@ -1,6 +1,14 @@
 // Réglages FSRS. Lecture directe du storage, écriture via le background.
 
 import { browser } from "wxt/browser";
+import {
+  BACKUP_FILENAME,
+  forgetBackupDirectoryHandle,
+  getBackupDirectoryStatus,
+  requestBackupDirectoryPermission,
+  saveBackupDirectoryHandle,
+  type BackupDirectoryStatus,
+} from "../../src/backup-directory";
 import { LOG_PREFIX } from "../../src/config";
 import { formatDueRelative } from "../../src/fsrs";
 import { sendToBackground } from "../../src/messaging";
@@ -10,6 +18,15 @@ import type { Settings } from "../../src/types";
 
 const app = document.querySelector<HTMLElement>("#app");
 let saving = false;
+let backupFeedback: string | null = null;
+
+type DirectoryPickerWindow = Window & {
+  showDirectoryPicker?: (options?: {
+    id?: string;
+    mode?: "read" | "readwrite";
+    startIn?: "documents";
+  }) => Promise<FileSystemDirectoryHandle>;
+};
 
 type NumericSettingKey = "reviewCooldownHours" | "requestRetention" | "maximumIntervalDays";
 
@@ -77,7 +94,10 @@ function fieldHtml(field: NumericField, settings: Settings): string {
 
 async function render(): Promise<void> {
   if (!app) return;
-  const data = await getAllData();
+  const [data, backupStatus] = await Promise.all([
+    getAllData(),
+    getBackupDirectoryStatus().catch((): BackupDirectoryStatus => ({ state: "missing" })),
+  ]);
   const { settings } = data;
   const cards = Object.values(data.cards);
   const now = Date.now();
@@ -88,6 +108,22 @@ async function render(): Promise<void> {
   const snoozed =
     settings.bannerSnoozedUntil !== null &&
     new Date(settings.bannerSnoozedUntil).getTime() > now;
+  const directoryName = backupStatus.state === "missing"
+    ? settings.automaticBackupDirectoryName
+    : backupStatus.directoryName;
+  const automaticActive = settings.automaticBackupEnabled && backupStatus.state === "granted";
+  const backupStateLabel = automaticActive
+    ? "Sauvegarde automatique active"
+    : backupStatus.state === "prompt" || backupStatus.state === "denied"
+      ? "Autorisation du dossier à réactiver"
+      : settings.automaticBackupEnabled && directoryName !== null
+        ? "Dossier à sélectionner de nouveau"
+        : directoryName === null
+          ? "Aucun dossier sélectionné"
+          : "Sauvegarde automatique désactivée";
+  const lastBackup = settings.automaticBackupLastAt === null
+    ? "Jamais"
+    : new Date(settings.automaticBackupLastAt).toLocaleString("fr-FR");
 
   app.innerHTML = `
     <div class="panel">
@@ -112,6 +148,60 @@ async function render(): Promise<void> {
         <span class="saved-note" data-note hidden>Enregistré ✓</span>
       </div>
       <p class="error" data-error hidden></p>
+    </div>
+
+    <div class="panel" id="sauvegardes">
+      <h2>Sauvegardes</h2>
+      <p>
+        Les données sont déjà conservées localement par Chrome, pas dans des cookies. Choisis un
+        dossier pour qu'une copie de <code>${BACKUP_FILENAME}</code> soit mise à jour après chaque
+        révision.
+      </p>
+      <div class="backup-status ${automaticActive ? "active" : ""}">
+        <span class="status-dot"></span>
+        <div>
+          <div class="field-name">${esc(backupStateLabel)}</div>
+          <div class="field-help">
+            Dossier : ${directoryName === null ? "—" : `<b>${esc(directoryName)}</b>`}
+            · Dernière copie : ${esc(lastBackup)}
+          </div>
+        </div>
+      </div>
+      ${
+        settings.automaticBackupLastError === null
+          ? ""
+          : `<p class="error backup-message">${esc(settings.automaticBackupLastError)}</p>`
+      }
+      ${backupFeedback === null ? "" : `<p class="success backup-message">${esc(backupFeedback)}</p>`}
+      <div class="actions wrap">
+        <button class="primary" data-choose-backup-folder>Choisir un dossier</button>
+        ${
+          backupStatus.state === "prompt" || backupStatus.state === "denied"
+            ? `<button data-reauthorize-backup>Réautoriser</button>`
+            : directoryName !== null
+              ? `<button data-backup-now>Sauvegarder maintenant</button>`
+              : ""
+        }
+        ${
+          settings.automaticBackupEnabled
+            ? `<button data-disable-backup>Désactiver l'auto</button>`
+            : backupStatus.state === "granted"
+              ? `<button data-enable-backup>Activer l'auto</button>`
+              : ""
+        }
+        ${directoryName !== null ? `<button data-forget-backup>Oublier le dossier</button>` : ""}
+      </div>
+      <div class="data-actions">
+        <div>
+          <div class="field-name">Importer ou exporter manuellement</div>
+          <div class="field-help">L'import fusionne les cartes et l'historique sans effacer les données présentes.</div>
+        </div>
+        <div class="actions compact">
+          <button data-import>Importer un JSON</button>
+          <button data-export>Exporter un JSON</button>
+          <input type="file" accept="application/json,.json" data-import-file hidden />
+        </div>
+      </div>
     </div>
 
     <div class="panel">
@@ -200,12 +290,134 @@ function wire(settings: Settings): void {
   });
 
   app.querySelector<HTMLButtonElement>("[data-reset]")?.addEventListener("click", () => {
-    save({ ...DEFAULT_SETTINGS, bannerSnoozedUntil: settings.bannerSnoozedUntil }).catch(failFrom);
+    save({
+      ...DEFAULT_SETTINGS,
+      bannerSnoozedUntil: settings.bannerSnoozedUntil,
+      automaticBackupEnabled: settings.automaticBackupEnabled,
+      automaticBackupDirectoryName: settings.automaticBackupDirectoryName,
+      automaticBackupLastAt: settings.automaticBackupLastAt,
+      automaticBackupLastError: settings.automaticBackupLastError,
+    }).catch(failFrom);
   });
 
   app.querySelector<HTMLButtonElement>("[data-unsnooze]")?.addEventListener("click", () => {
     save({ ...settings, bannerSnoozedUntil: null }).catch(failFrom);
   });
+
+  async function runBackupAction(action: () => Promise<string | null>): Promise<void> {
+    saving = true;
+    backupFeedback = null;
+    try {
+      backupFeedback = await action();
+      await render();
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) failFrom(err);
+    } finally {
+      saving = false;
+    }
+  }
+
+  app.querySelector<HTMLButtonElement>("[data-choose-backup-folder]")?.addEventListener("click", () => {
+    const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
+    if (picker === undefined) {
+      fail("Cette version de Chrome ne prend pas en charge le choix de dossier.");
+      return;
+    }
+    void runBackupAction(async () => {
+      const handle = await picker.call(window, {
+        id: "companion-automatic-backup",
+        mode: "readwrite",
+        startIn: "documents",
+      });
+      await saveBackupDirectoryHandle(handle);
+      await sendToBackground({
+        kind: "SAVE_SETTINGS",
+        settings: {
+          automaticBackupEnabled: true,
+          automaticBackupDirectoryName: handle.name,
+          automaticBackupLastError: null,
+        },
+      });
+      await sendToBackground({ kind: "WRITE_BACKUP_NOW" });
+      return `Sauvegarde activée dans « ${handle.name} ». `;
+    });
+  });
+
+  async function authorizeAndWrite(enableAutomatic: boolean): Promise<string> {
+    const status = await requestBackupDirectoryPermission();
+    if (status.state !== "granted") throw new Error("Chrome n'a pas autorisé ce dossier.");
+    await sendToBackground({
+      kind: "SAVE_SETTINGS",
+      settings: {
+        automaticBackupEnabled: enableAutomatic,
+        automaticBackupDirectoryName: status.directoryName,
+        automaticBackupLastError: null,
+      },
+    });
+    await sendToBackground({ kind: "WRITE_BACKUP_NOW" });
+    return `${BACKUP_FILENAME} a été mis à jour.`;
+  }
+
+  app.querySelector<HTMLButtonElement>("[data-reauthorize-backup]")?.addEventListener("click", () => {
+    void runBackupAction(() => authorizeAndWrite(settings.automaticBackupEnabled));
+  });
+  app.querySelector<HTMLButtonElement>("[data-backup-now]")?.addEventListener("click", () => {
+    void runBackupAction(() => authorizeAndWrite(settings.automaticBackupEnabled));
+  });
+  app.querySelector<HTMLButtonElement>("[data-enable-backup]")?.addEventListener("click", () => {
+    void runBackupAction(() => authorizeAndWrite(true));
+  });
+  app.querySelector<HTMLButtonElement>("[data-disable-backup]")?.addEventListener("click", () => {
+    void runBackupAction(async () => {
+      await sendToBackground({
+        kind: "SAVE_SETTINGS",
+        settings: { automaticBackupEnabled: false },
+      });
+      return "Sauvegarde automatique désactivée ; le dossier reste mémorisé.";
+    });
+  });
+  app.querySelector<HTMLButtonElement>("[data-forget-backup]")?.addEventListener("click", () => {
+    void runBackupAction(async () => {
+      await forgetBackupDirectoryHandle();
+      await sendToBackground({
+        kind: "SAVE_SETTINGS",
+        settings: {
+          automaticBackupEnabled: false,
+          automaticBackupDirectoryName: null,
+          automaticBackupLastError: null,
+        },
+      });
+      return "Le dossier a été oublié. Le fichier déjà créé n'a pas été supprimé.";
+    });
+  });
+
+  app.querySelector<HTMLButtonElement>("[data-export]")?.addEventListener("click", () => {
+    void exportJson().catch(failFrom);
+  });
+  const fileInput = app.querySelector<HTMLInputElement>("[data-import-file]");
+  app.querySelector<HTMLButtonElement>("[data-import]")?.addEventListener("click", () => {
+    fileInput?.click();
+  });
+  fileInput?.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file === undefined) return;
+    void runBackupAction(async () => {
+      const data = JSON.parse(await file.text()) as unknown;
+      const summary = await sendToBackground({ kind: "IMPORT_BACKUP", data });
+      return `Import terminé : ${summary.cardsAdded} carte(s) ajoutée(s), ${summary.cardsUpdated} fusionnée(s), ${summary.logEntriesAdded} révision(s) ajoutée(s).`;
+    });
+  });
+}
+
+async function exportJson(): Promise<void> {
+  const data = await getAllData();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = `companion-export-${stamp}.json`;
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
 }
 
 browser.storage.onChanged.addListener(() => {

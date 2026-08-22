@@ -66,6 +66,24 @@ export interface Settings {
   maximumIntervalDays: number;
   arracheCountsAsAgain: boolean;
   bannerSnoozedUntil: string | null;
+  automaticBackupEnabled: boolean;
+  automaticBackupDirectoryName: string | null;
+  automaticBackupLastAt: string | null;
+  automaticBackupLastError: string | null;
+}
+
+export interface BackupSnapshot {
+  schemaVersion: number;
+  cards: Record<string, ProblemCard>;
+  log: ReviewLogEntry[];
+  settings: Settings;
+  pendingAccepted: PendingAccepted | null;
+}
+
+export interface ImportSummary {
+  cardsAdded: number;
+  cardsUpdated: number;
+  logEntriesAdded: number;
 }
 
 export interface PendingAccepted {
@@ -94,6 +112,8 @@ export type RuntimeRequest =
   | { kind: "CLEAR_PENDING_ACCEPTED" }
   | { kind: "SNOOZE_BANNER" }
   | { kind: "SAVE_SETTINGS"; settings: Partial<Settings> }
+  | { kind: "IMPORT_BACKUP"; data: unknown }
+  | { kind: "WRITE_BACKUP_NOW" }
   | { kind: "UPDATE_CARD_META"; problem: ProblemDescriptor };
 
 export interface RuntimeResponseMap {
@@ -105,6 +125,8 @@ export interface RuntimeResponseMap {
   CLEAR_PENDING_ACCEPTED: { ok: true };
   SNOOZE_BANNER: { ok: true };
   SAVE_SETTINGS: { ok: true };
+  IMPORT_BACKUP: ImportSummary;
+  WRITE_BACKUP_NOW: { filename: string };
   UPDATE_CARD_META: { ok: true };
 }
 
