@@ -3,11 +3,11 @@ import { defineConfig } from "wxt";
 export default defineConfig({
   outDir: "output",
   manifest: {
-    name: "NeetCode Companion",
+    name: "Companion",
     description:
-      "Révision espacée FSRS pour NeetCode : après chaque Accepted, note le problème et planifie sa prochaine révision.",
+      "Révision espacée FSRS unifiée pour LeetCode et NeetCode, sans cartes en double.",
     permissions: ["storage", "alarms", "tabs"],
-    host_permissions: ["https://neetcode.io/*"],
+    host_permissions: ["https://neetcode.io/*", "https://leetcode.com/*"],
     // L'intercepteur doit s'exécuter dans le contexte de la page : il est
     // injecté par le content script, donc servi comme ressource accessible.
     web_accessible_resources: [

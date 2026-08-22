@@ -1,5 +1,5 @@
 // Panneau de notation injecté après un Accepted. Shadow DOM, styles
-// auto-contenus, aucune fuite CSS vers ou depuis NeetCode.
+// auto-contenus, aucune fuite CSS vers ou depuis le site hôte.
 
 import { formatDueRelative } from "../fsrs";
 import type { Feel } from "../types";
@@ -8,7 +8,8 @@ export type PanelMode = "seul" | "aide";
 
 export interface PanelData {
   title: string;
-  ncDifficulty: string;
+  difficulty: string;
+  platform: "LeetCode" | "NeetCode";
   submissionsInSession: number;
   minutesInSession: number | null;
 }
@@ -113,18 +114,18 @@ export function mountPanel(data: PanelData, cb: PanelCallbacks): void {
   panel.className = "panel";
   shadow.appendChild(panel);
 
-  const diffClass = data.ncDifficulty.toLowerCase();
+  const diffClass = data.difficulty.toLowerCase();
   const minutesChip =
     data.minutesInSession === null
       ? ""
       : `<span class="chip">≈ ${data.minutesInSession} min</span>`;
 
   panel.innerHTML = `
-    <div class="tag">✓ Accepted · détecté</div>
+    <div class="tag">✓ Accepted · ${escapeHtml(data.platform)}</div>
     <button class="close" title="Fermer">×</button>
     <div class="title"></div>
     <div class="chips">
-      <span class="chip ${diffClass}">${escapeHtml(data.ncDifficulty)}</span>
+      <span class="chip ${diffClass}">${escapeHtml(data.difficulty)}</span>
       <span class="chip">${data.submissionsInSession} soumission${data.submissionsInSession > 1 ? "s" : ""}</span>
       ${minutesChip}
     </div>

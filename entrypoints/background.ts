@@ -13,24 +13,24 @@ import {
   checkCooldown,
   dueCards,
   logReview,
+  prepareAccepted,
   previewReview,
   saveSettingsPatch,
   snoozeBanner,
+  updateCardMeta,
 } from "../src/review";
 import {
   getCards,
   migrateIfNeeded,
   setPendingAccepted,
-  updateCardMeta,
 } from "../src/storage";
 import type { RuntimeRequest } from "../src/types";
 
 export default defineBackground(() => {
   console.log(`${LOG_PREFIX} background démarré`);
 
-  void migrateIfNeeded()
-    .then(updateBadge)
-    .catch((err: unknown) => console.error(`${LOG_PREFIX} migration`, err));
+  const ready = migrateIfNeeded().then(updateBadge);
+  void ready.catch((err: unknown) => console.error(`${LOG_PREFIX} migration`, err));
 
   // Recalculs périodiques : jamais de setTimeout long en MV3.
   void browser.alarms.create(ALARM_BADGE_PERIODIC, { periodInMinutes: 60 });
@@ -56,7 +56,7 @@ export default defineBackground(() => {
     try {
       const count = dueCards(await getCards()).length;
       try {
-        // Safari applique son propre style de badge et peut ignorer la couleur.
+        // Certains navigateurs Chromium peuvent imposer leur propre style de badge.
         await browser.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
       } catch {
         /* sans importance */
@@ -88,11 +88,14 @@ export default defineBackground(() => {
   );
 
   async function handle(msg: RuntimeRequest): Promise<unknown> {
+    await ready;
     switch (msg.kind) {
+      case "PREPARE_ACCEPTED":
+        return serialized(() => prepareAccepted(msg.problem));
       case "CHECK_COOLDOWN":
-        return checkCooldown(msg.slug);
+        return checkCooldown(msg.problemId);
       case "PREVIEW_REVIEW":
-        return previewReview(msg.slug, msg.mode, msg.feel);
+        return previewReview(msg.problemId, msg.mode, msg.feel);
       case "LOG_REVIEW":
         return serialized(async () => {
           const result = await logReview(msg.review);
@@ -111,7 +114,7 @@ export default defineBackground(() => {
         });
       case "UPDATE_CARD_META":
         return serialized(async () => {
-          await updateCardMeta(msg.slug, { title: msg.title, ncDifficulty: msg.ncDifficulty });
+          await updateCardMeta(msg.problem);
           return { ok: true } as const;
         });
       case "SNOOZE_BANNER":

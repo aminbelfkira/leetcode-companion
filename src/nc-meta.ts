@@ -6,7 +6,7 @@ import type { Difficulty } from "./types";
 
 export interface ProblemMeta {
   title: string;
-  ncDifficulty: Difficulty;
+  difficulty: Difficulty;
   metaIncomplete: boolean;
 }
 
@@ -38,7 +38,7 @@ async function fetchProblemMeta(slug: string): Promise<ProblemMeta | null> {
   if (typeof name !== "string" || name.trim() === "") return null;
   return {
     title: name.trim(),
-    ncDifficulty: parseDifficulty(json.data?.difficulty),
+    difficulty: parseDifficulty(json.data?.difficulty),
     metaIncomplete: false,
   };
 }
@@ -52,7 +52,7 @@ function metaFromDocument(slug: string): ProblemMeta {
 
   return {
     title: heading || documentTitle || slug,
-    ncDifficulty: parseDifficulty(normalized),
+    difficulty: parseDifficulty(normalized),
     metaIncomplete: true,
   };
 }

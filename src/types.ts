@@ -1,74 +1,84 @@
-// Modèle de données et protocole d'événements entre les mondes de l'extension.
+// Modèle de données commun à LeetCode et NeetCode.
 
+export type Platform = "leetcode" | "neetcode";
 export type Mode = "seul" | "aide" | "abandon";
-export type Feel = 1 | 2 | 3 | 4; // 1 fluide · 2 correct · 3 laborieux · 4 à l'arraché
+export type Feel = 1 | 2 | 3 | 4;
 export type Difficulty = "Easy" | "Medium" | "Hard" | "Unknown";
 
 export interface FsrsState {
-  due: string; // ISO
+  due: string;
   stability: number;
   difficulty: number;
   reps: number;
   lapses: number;
-  state: number; // enum State de ts-fsrs
-  last_review: string | null; // ISO
+  state: number;
+  last_review: string | null;
 }
 
+/** Métadonnées observées sur l'un des deux sites. */
+export interface ProblemDescriptor {
+  platform: Platform;
+  slug: string;
+  title: string;
+  difficulty: Difficulty;
+  frontendId: string | null;
+  listSlug: string | null;
+  metaIncomplete: boolean;
+}
+
+export interface ProblemSource {
+  slug: string;
+  frontendId: string | null;
+  listSlug: string | null;
+  difficulty: Difficulty;
+  lastSeenAt: string;
+}
+
+/** Une seule carte de révision, éventuellement reliée aux deux plateformes. */
 export interface ProblemCard {
-  slug: string; // "duplicate-integer" — clé primaire
-  title: string; // "Contains Duplicate"
-  ncDifficulty: Difficulty;
-  listSlug: string | null; // "neetcode150" si connu, informatif
-  metaIncomplete?: boolean; // métadonnées issues du repli DOM
+  id: string;
+  title: string;
+  difficulty: Difficulty;
+  sources: Partial<Record<Platform, ProblemSource>>;
+  metaIncomplete?: boolean;
   lastMode: Mode;
-  lastFeel: Feel | null; // null si mode = "abandon"
+  lastFeel: Feel | null;
   fsrs: FsrsState;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface ReviewLogEntry {
-  // append-only, source de vérité
   ts: string;
-  slug: string;
+  problemId: string;
+  platform: Platform;
   mode: Mode;
   feel: Feel | null;
-  grade: 1 | 2 | 3 | 4; // Rating FSRS réellement appliqué
+  grade: 1 | 2 | 3 | 4;
   submissionsInSession: number;
   minutesInSession: number | null;
-  scheduledDue: string; // due résultant
+  scheduledDue: string;
 }
 
 export interface Settings {
-  reviewCooldownHours: number; // défaut 8
-  requestRetention: number; // défaut 0.9
-  maximumIntervalDays: number; // défaut 180
-  arracheCountsAsAgain: boolean; // défaut false
+  reviewCooldownHours: number;
+  requestRetention: number;
+  maximumIntervalDays: number;
+  arracheCountsAsAgain: boolean;
   bannerSnoozedUntil: string | null;
 }
 
 export interface PendingAccepted {
-  // Accepted détecté mais panneau fermé sans noter
-  slug: string;
-  title: string;
-  ncDifficulty: Difficulty;
-  listSlug: string | null;
+  problemId: string;
+  problem: ProblemDescriptor;
   submissionsInSession: number;
   minutesInSession: number | null;
   acceptedAt: string;
 }
 
-// ---------------------------------------------------------------------------
-// Messages runtime vers le background (single-writer)
-// ---------------------------------------------------------------------------
-
-/** Payload d'une review saisie (panneau, popup, abandon). */
 export interface ReviewInput {
-  slug: string;
-  title: string;
-  ncDifficulty: Difficulty;
-  listSlug: string | null;
-  metaIncomplete: boolean;
+  problemId: string;
+  problem: ProblemDescriptor;
   mode: Mode;
   feel: Feel | null;
   submissionsInSession: number;
@@ -76,21 +86,18 @@ export interface ReviewInput {
 }
 
 export type RuntimeRequest =
-  | { kind: "CHECK_COOLDOWN"; slug: string }
-  | { kind: "PREVIEW_REVIEW"; slug: string; mode: Mode; feel: Feel | null }
+  | { kind: "PREPARE_ACCEPTED"; problem: ProblemDescriptor }
+  | { kind: "CHECK_COOLDOWN"; problemId: string }
+  | { kind: "PREVIEW_REVIEW"; problemId: string; mode: Mode; feel: Feel | null }
   | { kind: "LOG_REVIEW"; review: ReviewInput }
   | { kind: "SET_PENDING_ACCEPTED"; pending: PendingAccepted }
   | { kind: "CLEAR_PENDING_ACCEPTED" }
   | { kind: "SNOOZE_BANNER" }
   | { kind: "SAVE_SETTINGS"; settings: Partial<Settings> }
-  | {
-      kind: "UPDATE_CARD_META"; // répare une carte metaIncomplete
-      slug: string;
-      title: string;
-      ncDifficulty: Difficulty;
-    };
+  | { kind: "UPDATE_CARD_META"; problem: ProblemDescriptor };
 
 export interface RuntimeResponseMap {
+  PREPARE_ACCEPTED: { problemId: string; underCooldown: boolean };
   CHECK_COOLDOWN: { underCooldown: boolean };
   PREVIEW_REVIEW: { scheduledDue: string };
   LOG_REVIEW: { scheduledDue: string };
@@ -105,12 +112,8 @@ export type RuntimeResponse<K extends RuntimeRequest["kind"]> =
   | RuntimeResponseMap[K]
   | { error: string };
 
-// ---------------------------------------------------------------------------
-// Événements MAIN vers ISOLATED
-// ---------------------------------------------------------------------------
-
+// Événements MAIN -> ISOLATED de NeetCode.
 export interface PageEventPayloads {
-  /** Une soumission vient de partir. `token` corrèle le départ et le verdict. */
   "submission-created": { token: string; slug: string | null };
   "submission-result": {
     token: string;
@@ -123,7 +126,6 @@ export interface PageEventPayloads {
 }
 
 export type PageEventType = keyof PageEventPayloads;
-
 export type PageMessage = {
   [T in PageEventType]: {
     source: "nccfsrs";
@@ -131,3 +133,19 @@ export type PageMessage = {
     payload: PageEventPayloads[T];
   };
 }[PageEventType];
+
+// Événements MAIN -> ISOLATED de LeetCode.
+export interface LcPageEventPayloads {
+  "submission-created": { id: string; slug: string };
+  "submission-result": { id: string; statusMsg: string; statusCode: number };
+  "url-change": { pathname: string };
+}
+
+export type LcPageEventType = keyof LcPageEventPayloads;
+export type LcPageMessage = {
+  [T in LcPageEventType]: {
+    source: "nccfsrs";
+    type: T;
+    payload: LcPageEventPayloads[T];
+  };
+}[LcPageEventType];

@@ -1,14 +1,17 @@
-// Cœur métier : fenêtre anti-doublon, calcul d'échéance, écriture d'une review.
-//
-// Ces fonctions sont appelées uniquement par le background (single-writer),
-// mais vivent hors de son entrypoint pour rester directement testables.
+// Cœur métier commun : identité multi-plateforme, anti-doublon et FSRS.
 
 import { gradeFor, nextState } from "./fsrs";
+import {
+  findExistingProblemId,
+  preferredProblemId,
+  sourceFromDescriptor,
+} from "./problem-identity";
 import {
   getCards,
   getLog,
   getPendingAccepted,
   getSettings,
+  saveProblemCard,
   saveReview,
   setPendingAccepted,
   setSettings,
@@ -17,12 +20,12 @@ import type {
   Feel,
   Mode,
   ProblemCard,
+  ProblemDescriptor,
   ReviewInput,
   ReviewLogEntry,
   Settings,
 } from "./types";
 
-/** Cartes dues (échéance passée), retards inclus, de la plus ancienne à la plus récente. */
 export function dueCards(
   cards: Record<string, ProblemCard>,
   now: number = Date.now(),
@@ -32,27 +35,63 @@ export function dueCards(
     .sort((a, b) => a.fsrs.due.localeCompare(b.fsrs.due));
 }
 
-/** Un dernier log plus récent que `reviewCooldownHours` fait ignorer l'Accepted. */
-export async function checkCooldown(slug: string): Promise<{ underCooldown: boolean }> {
-  const [log, settings] = await Promise.all([getLog(), getSettings()]);
-  const lastTs = log.filter((entry) => entry.slug === slug).at(-1)?.ts;
-  if (lastTs === undefined) return { underCooldown: false }; // jamais suivi
-  const elapsedH = (Date.now() - new Date(lastTs).getTime()) / 3_600_000;
-  return { underCooldown: elapsedH < settings.reviewCooldownHours };
+function mergedTitle(existing: ProblemCard | undefined, problem: ProblemDescriptor): string {
+  if (problem.metaIncomplete && existing !== undefined) return existing.title;
+  if (problem.platform === "neetcode" && existing?.sources.leetcode !== undefined) {
+    return existing.title;
+  }
+  return problem.title;
 }
 
-/** Échéance qu'obtiendrait la carte pour cette notation, sans rien écrire. */
+export async function checkCooldown(problemId: string): Promise<{ underCooldown: boolean }> {
+  const [log, settings] = await Promise.all([getLog(), getSettings()]);
+  const lastTs = log.filter((entry) => entry.problemId === problemId).at(-1)?.ts;
+  if (lastTs === undefined) return { underCooldown: false };
+  const elapsedHours = (Date.now() - new Date(lastTs).getTime()) / 3_600_000;
+  return { underCooldown: elapsedHours < settings.reviewCooldownHours };
+}
+
+/**
+ * Résout l'identité avant d'afficher le panneau. Si l'autre plateforme est
+ * déjà connue, sa source est ajoutée même lorsque le cooldown ignore l'Accepted.
+ */
+export async function prepareAccepted(
+  problem: ProblemDescriptor,
+): Promise<{ problemId: string; underCooldown: boolean }> {
+  const cards = await getCards();
+  const problemId = findExistingProblemId(cards, problem) ?? preferredProblemId(problem);
+  const existing = cards[problemId];
+  if (existing !== undefined) {
+    const now = new Date().toISOString();
+    const source = sourceFromDescriptor(problem, now, existing.sources[problem.platform]);
+    const { metaIncomplete: _oldIncomplete, ...completeExisting } = existing;
+    await saveProblemCard({
+      ...completeExisting,
+      title: mergedTitle(existing, problem),
+      difficulty:
+        problem.difficulty === "Unknown" ? existing.difficulty : problem.difficulty,
+      sources: { ...existing.sources, [problem.platform]: source },
+      ...(existing.metaIncomplete === true && problem.metaIncomplete
+        ? { metaIncomplete: true }
+        : {}),
+      updatedAt: now,
+    });
+  }
+  return { problemId, ...(await checkCooldown(problemId)) };
+}
+
 export async function previewReview(
-  slug: string,
+  problemId: string,
   mode: Mode,
   feel: Feel | null,
 ): Promise<{ scheduledDue: string }> {
   const [cards, settings] = await Promise.all([getCards(), getSettings()]);
   const grade = gradeFor(mode, feel, settings);
-  return { scheduledDue: nextState(cards[slug]?.fsrs ?? null, grade, new Date(), settings).due };
+  return {
+    scheduledDue: nextState(cards[problemId]?.fsrs ?? null, grade, new Date(), settings).due,
+  };
 }
 
-/** Écrit la carte et son entrée de log, puis retire l'Accepted en attente. */
 export async function logReview(review: ReviewInput): Promise<{ scheduledDue: string }> {
   const now = new Date();
   const [cards, settings, pending] = await Promise.all([
@@ -60,16 +99,28 @@ export async function logReview(review: ReviewInput): Promise<{ scheduledDue: st
     getSettings(),
     getPendingAccepted(),
   ]);
-  const existing = cards[review.slug];
+  const existing = cards[review.problemId];
   const grade = gradeFor(review.mode, review.feel, settings);
   const fsrs = nextState(existing?.fsrs ?? null, grade, now, settings);
-
+  const problem = review.problem;
   const card: ProblemCard = {
-    slug: review.slug,
-    title: review.title,
-    ncDifficulty: review.ncDifficulty,
-    listSlug: review.listSlug ?? existing?.listSlug ?? null,
-    ...(review.metaIncomplete ? { metaIncomplete: true } : {}),
+    id: review.problemId,
+    title: mergedTitle(existing, problem),
+    difficulty:
+      problem.difficulty === "Unknown" && existing !== undefined
+        ? existing.difficulty
+        : problem.difficulty,
+    sources: {
+      ...existing?.sources,
+      [problem.platform]: sourceFromDescriptor(
+        problem,
+        now.toISOString(),
+        existing?.sources[problem.platform],
+      ),
+    },
+    ...(problem.metaIncomplete && (existing === undefined || existing.metaIncomplete === true)
+      ? { metaIncomplete: true }
+      : {}),
     lastMode: review.mode,
     lastFeel: review.mode === "abandon" ? null : review.feel,
     fsrs,
@@ -78,7 +129,8 @@ export async function logReview(review: ReviewInput): Promise<{ scheduledDue: st
   };
   const entry: ReviewLogEntry = {
     ts: now.toISOString(),
-    slug: review.slug,
+    problemId: review.problemId,
+    platform: problem.platform,
     mode: review.mode,
     feel: review.feel,
     grade,
@@ -87,11 +139,30 @@ export async function logReview(review: ReviewInput): Promise<{ scheduledDue: st
     scheduledDue: fsrs.due,
   };
   await saveReview(card, entry);
-  if (pending?.slug === review.slug) await setPendingAccepted(null);
+  if (pending?.problemId === review.problemId) await setPendingAccepted(null);
   return { scheduledDue: fsrs.due };
 }
 
-/** Masque le bandeau jusqu'au prochain minuit local. */
+export async function updateCardMeta(problem: ProblemDescriptor): Promise<void> {
+  const cards = await getCards();
+  const problemId = findExistingProblemId(cards, problem);
+  if (problemId === null) return;
+  const card = cards[problemId];
+  if (card === undefined) return;
+  const now = new Date().toISOString();
+  const { metaIncomplete: _dropped, ...rest } = card;
+  await saveProblemCard({
+    ...rest,
+    title: mergedTitle(card, problem),
+    difficulty: problem.difficulty,
+    sources: {
+      ...card.sources,
+      [problem.platform]: sourceFromDescriptor(problem, now, card.sources[problem.platform]),
+    },
+    updatedAt: now,
+  });
+}
+
 export async function snoozeBanner(): Promise<void> {
   const midnight = new Date();
   midnight.setHours(24, 0, 0, 0);

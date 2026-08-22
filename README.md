@@ -1,129 +1,113 @@
-# NeetCode Companion
+# Companion
 
-Fork de **[aminbelfkira/leetcode-companion](https://github.com/aminbelfkira/leetcode-companion)**,
-porté de LeetCode vers **[neetcode.io](https://neetcode.io)**, et de Chrome vers **Safari sur
-macOS**.
+Extension Chrome locale qui suit les problèmes résolus sur
+[LeetCode](https://leetcode.com) **et** [NeetCode](https://neetcode.io), puis planifie les révisions
+avec [FSRS](https://github.com/open-spaced-repetition/ts-fsrs).
 
-Seul le volet flashcards du projet d'origine est repris :
+Ce projet fusionne les workflows de
+[neetcode-companion](https://github.com/axlstl/neetcode-companion) et
+[leetcode-companion](https://github.com/aminbelfkira/leetcode-companion) dans une seule extension.
 
-- après chaque soumission **Accepted**, un panneau demande comment le problème a été résolu et sa
-  difficulté ressentie ;
-- la prochaine échéance est planifiée par [FSRS](https://github.com/open-spaced-repetition/ts-fsrs) ;
-- un badge, un popup et un bandeau sur neetcode.io remontent les problèmes dus.
+## Ce que fait l'extension
 
-Le volet GitHub Sync de l'original n'est pas porté, NeetCode intégrant déjà sa propre
-synchronisation GitHub.
+- détecte uniquement les vraies soumissions **Accepted** sur les deux sites ;
+- ignore les boutons **Run** ;
+- affiche le même panneau de notation après un Accepted ;
+- conserve une seule carte et un seul planning FSRS lorsqu'un problème est fait sur les deux sites ;
+- montre les révisions dues dans le badge, le popup et un bandeau sur chaque site ;
+- ouvre une révision sur LeetCode lorsqu'une source LeetCode existe, sinon sur NeetCode ;
+- restaure le code initial de l'éditeur LeetCode lorsqu'une révision est lancée depuis Companion ;
+- migre automatiquement les anciennes cartes NeetCode au premier démarrage.
 
-Tout fonctionne localement. Le code source des solutions n'est ni lu, ni stocké, ni transmis.
+Tout le planning reste dans `chrome.storage.local`. Le code des solutions n'est ni lu, ni stocké,
+ni envoyé.
 
-## Installation
+## Fusion des noms sans doublons
 
-Prérequis communs : **Node 20 ou plus récent**. L'extension se construit avec
-[WXT](https://wxt.dev), qui produit une build MV3 dans `output/chrome-mv3`.
+Le slug n'est pas utilisé seul : `duplicate-integer` sur NeetCode et `contains-duplicate` sur
+LeetCode représentent par exemple le même problème.
+
+La résolution d'identité suit cet ordre :
+
+1. alias NeetCode → LeetCode connus pour les divergences du NeetCode 250 ;
+2. source et identifiant LeetCode déjà observés ;
+3. titre normalisé (casse, accents et ponctuation ignorés) ;
+4. rapprochement conservateur pour une variation mineure et non ambiguë du titre.
+
+La carte commune garde ensuite les deux sources. Le cooldown est appliqué à cette carte, pas au
+site : résoudre le même problème sur l'autre plateforme ne crée donc pas une deuxième révision.
+
+## Installation dans Chrome
+
+### Utilisateur — sans Node.js
+
+Télécharger l'archive `leetcode-neetcode-companion-…-chrome.zip` de la dernière
+[GitHub Release](https://github.com/axlstl/neetcode-companion/releases), la décompresser, puis :
+
+1. ouvrir `chrome://extensions` ;
+2. activer **Mode développeur** ;
+3. cliquer sur **Charger l'extension non empaquetée** ;
+4. sélectionner le dossier décompressé, celui qui contient directement `manifest.json`.
+
+Le ZIP est aussi le paquet à envoyer dans le Chrome Web Store. Pour une installation réellement en
+un clic et des mises à jour automatiques, la distribution finale doit passer par le Web Store.
+
+### Développeur — depuis les sources
+
+Prérequis : Node.js 20 ou plus récent.
 
 ```bash
 npm install
 npm run build
 ```
 
-> NeetCode désactive les boutons **Run** et **Submit** tant qu'on n'est pas connecté à son compte.
-> Sans connexion, l'extension n'a rien à détecter.
+Puis charger `output/chrome-mv3/` dans `chrome://extensions` avec **Charger l'extension non
+empaquetée**.
 
-### Chrome, Edge, Brave (Windows, macOS, Linux)
+## Publier une version
 
-1. ouvrir `chrome://extensions`, ou `edge://extensions` sur Edge ;
-2. activer **Mode développeur**, en haut à droite ;
-3. cliquer sur **Charger l'extension non empaquetée** ;
-4. sélectionner le dossier **`output/chrome-mv3`** ;
-5. ouvrir [neetcode.io](https://neetcode.io), se connecter, résoudre un problème.
-
-L'icône verte apparaît dans la barre d'outils et le badge indique le nombre de révisions dues.
-
-Firefox n'est pour l'instant pas supporté
-
-### Safari (macOS)
-
-Si c'est la première fois que vous utilisez Xcode, pensez à faire :
+Les fichiers générés restent hors de Git. Un tag de version déclenche GitHub Actions, exécute les
+tests, construit le ZIP Chrome et l'attache automatiquement à une GitHub Release :
 
 ```bash
-sudo xcodebuild -license accept
+npm version patch
+git push origin main --follow-tags
 ```
 
-Puis, à la racine du projet :
+La version de `package.json`, du manifest généré et du nom de l'archive reste ainsi synchronisée.
 
-```bash
-npm run safari
-```
-
-Le script construit l'extension, la convertit en projet Xcode dans `output/safari`, la compile, et affiche le chemin de l'application produite. Ensuite, dans Safari :
-
-1. ouvrir une fois l'application construite, par double-clic ;
-2. Réglages, Avancé, cocher **Afficher les fonctionnalités pour développeurs web** ;
-3. menu **Développement**, **Autoriser les extensions non signées**. À refaire à chaque
-   redémarrage de Safari tant que l'application n'est pas signée avec un compte développeur Apple ;
-4. Réglages, Extensions, activer **NeetCode Companion** ;
-5. dans le même panneau, régler l'accès à `neetcode.io` sur **Toujours autoriser**.
+NeetCode exige une connexion au compte pour activer ses boutons Run/Submit. LeetCode et NeetCode
+peuvent faire évoluer leurs endpoints non documentés ; la logique correspondante est isolée dans
+`src/lc-endpoints.ts` et `src/nc-endpoints.ts`.
 
 ## Développement
 
 ```bash
-npm run dev        # rechargement à chaud dans un Chrome de développement
-npm test           # suite Vitest
-npm run compile    # typage strict, sans émission
-npm run build      # build de production
-npm run zip        # archive prête à publier
-npm run safari     # build puis projet Xcode et application Safari
+npm run dev
+npm test
+npm run compile
+npm run build
+npm run zip
 ```
+
+La suite couvre FSRS, la détection NeetCode, la détection LeetCode, la fusion d'identité et le
+stockage unifié.
 
 ## Structure
 
 ```text
 entrypoints/
-  background.ts          service worker : routage des messages, badge, alarmes
-  interceptor.ts          script injecté dans la page : patch de fetch et XHR
-  neetcode.content.ts     content script : session, panneau, bandeau
-  popup/ options/         interfaces
+  background.ts                    stockage single-writer, badge et messages
+  interceptor.ts                   intercepteur MAIN NeetCode
+  neetcode.content.ts              session et UI NeetCode
+  leetcode-interceptor.content.ts  intercepteur MAIN LeetCode
+  leetcode.content.ts              session et UI LeetCode
+  popup/ options/                   interfaces Chrome
 src/
-  nc-endpoints.ts         détection des soumissions et des verdicts, fonctions pures
-  nc-meta.ts              titre et difficulté, API puis repli DOM
-  review.ts               fenêtre anti-doublon, calcul d'échéance, écriture
-  fsrs.ts                 wrapper ts-fsrs, mapping ressenti vers grade
-  storage.ts types.ts config.ts messaging.ts
-  ui/panel.ts ui/banner.ts
-tests/                    Vitest, dont fakeBrowser pour le storage
-scripts/build-safari.sh   conversion et compilation Xcode
+  problem-identity.ts              alias, normalisation et résolution anti-doublon
+  lc-endpoints.ts lc-meta.ts        détection et métadonnées LeetCode
+  nc-endpoints.ts nc-meta.ts        détection et métadonnées NeetCode
+  review.ts storage.ts              FSRS, migration et carte multi-plateforme
+  ui/                               panneau, bandeau et reset LeetCode
+tests/
 ```
-
-La logique de détection vit entièrement dans `src/nc-endpoints.ts`, en fonctions pures : c'est la
-surface couverte par les tests, et les entrypoints ne font que du câblage.
-
-## Comment la détection fonctionne
-
-NeetCode est une application Angular et son `HttpClient` passe par `XMLHttpRequest`. Un content
-script possède son propre `XMLHttpRequest` et ne verrait donc rien : l'intercepteur est injecté
-dans le contexte de la page, où il surveille trois routes.
-
-| Route                               | Interprétation                                       |
-| ----------------------------------- | ---------------------------------------------------- |
-| `POST /api/executeCodeFunctionHttp` | soumission d'un problème de code                     |
-| `POST /api/runSqlFunctionHttp`      | soumission SQL si `runOnly: false`, sinon un « Run » |
-| `POST /api/runCodeFunctionHttp`     | bouton « Run », jamais une soumission                |
-
-Le verdict est lu dans `data.status.description`, et `"Accepted"` déclenche le panneau. Le slug du
-problème vient de l'URL et jamais du corps de la requête : le champ `rawCode` n'est donc jamais lu.
-
-Les métadonnées, titre et difficulté, viennent de `POST /api/getProblemMetadataFunctionHttp`, avec
-un repli sur le `h1` et la pastille de difficulté de la page si l'appel échoue.
-
-> Ces routes ne sont pas documentées par NeetCode. Si elles changent, tout se corrige dans
-> `src/nc-endpoints.ts`, et les tests le signalent immédiatement.
-
-## Notation et planification
-
-| Réponse                  | Grade FSRS                |
-| ------------------------ | ------------------------- |
-| Avec aide, ou abandon    | Again                     |
-| Seul, 4 « à l'arraché »  | Hard, ou Again au choix   |
-| Seul, 3 « laborieux »    | Hard                      |
-| Seul, 2 « correct »      | Good                      |
-| Seul, 1 « fluide »       | Easy                      |

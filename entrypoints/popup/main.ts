@@ -4,11 +4,21 @@
 import { browser } from "wxt/browser";
 import { LOG_PREFIX } from "../../src/config";
 import { formatDueRelative } from "../../src/fsrs";
-import { NC_ORIGIN, problemSlugFromPathname, reviewProblemUrl } from "../../src/nc-endpoints";
+import { LC_ORIGIN, problemSlugFromPathname as lcProblemSlug } from "../../src/lc-endpoints";
 import { sendToBackground } from "../../src/messaging";
+import { NC_ORIGIN, problemSlugFromPathname as ncProblemSlug } from "../../src/nc-endpoints";
+import { problemUrl } from "../../src/problem-identity";
 import { dueCards } from "../../src/review";
 import { getAllData } from "../../src/storage";
-import type { Feel, Mode, PendingAccepted, ProblemCard, ReviewInput } from "../../src/types";
+import type {
+  Feel,
+  Mode,
+  PendingAccepted,
+  Platform,
+  ProblemCard,
+  ProblemDescriptor,
+  ReviewInput,
+} from "../../src/types";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -45,10 +55,14 @@ function modeLabel(mode: Mode): string {
 }
 
 function cardMetaHtml(card: ProblemCard): string {
-  const difficulty = card.ncDifficulty.toLowerCase();
+  const difficulty = card.difficulty.toLowerCase();
   const feel = card.lastFeel === null ? "ressenti non noté" : `ressenti ${card.lastFeel}`;
+  const platforms = Object.keys(card.sources)
+    .map((platform) => (platform === "leetcode" ? "LeetCode" : "NeetCode"))
+    .join(" + ");
   return `
-    <span class="difficulty difficulty-${difficulty}">${esc(card.ncDifficulty)}</span>
+    <span class="difficulty difficulty-${difficulty}">${esc(card.difficulty)}</span>
+    <span>${esc(platforms)}</span>
     <span>${esc(modeLabel(card.lastMode))}</span>
     <span>${esc(feel)}</span>
   `;
@@ -63,10 +77,10 @@ function dueBadgeHtml(card: ProblemCard, todayMid: number): string {
 
 function reviewRowHtml(card: ProblemCard, todayMid: number): string {
   return `
-    <button class="review-row" data-open="${esc(card.slug)}">
+    <button class="review-row" data-open="${esc(card.id)}">
       <span class="review-copy">
         <span class="review-name">${esc(card.title)}</span>
-        <span class="review-meta">${esc(card.ncDifficulty)} · ${esc(modeLabel(card.lastMode))} · ${
+        <span class="review-meta">${esc(card.difficulty)} · ${esc(modeLabel(card.lastMode))} · ${
           card.lastFeel === null ? "non noté" : `ressenti ${card.lastFeel}`
         }</span>
       </span>
@@ -76,14 +90,17 @@ function reviewRowHtml(card: ProblemCard, todayMid: number): string {
   `;
 }
 
-async function activeTrackedSlug(cards: Record<string, ProblemCard>): Promise<string | null> {
+async function activeTrackedId(cards: Record<string, ProblemCard>): Promise<string | null> {
   try {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) return null;
     const url = new URL(tab.url);
-    if (url.origin !== NC_ORIGIN) return null;
-    const slug = problemSlugFromPathname(url.pathname);
-    return slug !== null && cards[slug] !== undefined ? slug : null;
+    const platform: Platform | null =
+      url.origin === NC_ORIGIN ? "neetcode" : url.origin === LC_ORIGIN ? "leetcode" : null;
+    if (platform === null) return null;
+    const slug = platform === "neetcode" ? ncProblemSlug(url.pathname) : lcProblemSlug(url.pathname);
+    if (slug === null) return null;
+    return Object.values(cards).find((card) => card.sources[platform]?.slug === slug)?.id ?? null;
   } catch {
     return null;
   }
@@ -124,7 +141,7 @@ async function render(): Promise<void> {
     day: "numeric",
     month: "long",
   });
-  const activeSlug = await activeTrackedSlug(data.cards);
+  const activeId = await activeTrackedId(data.cards);
 
   const parts: string[] = [];
   parts.push(`
@@ -150,12 +167,12 @@ async function render(): Promise<void> {
   if (data.pendingAccepted !== null) {
     parts.push(pendingBlockHtml(data.pendingAccepted));
   } else {
-    parts.push(focusBlockHtml(due, next, now, activeSlug));
+    parts.push(focusBlockHtml(due, next, now, activeId));
     const queue = queueBlockHtml(due, dueTomorrow, dueThisWeek, todayMid);
     if (queue !== "") parts.push(queue);
-    if (activeSlug !== null && due.some((card) => card.slug === activeSlug)) {
+    if (activeId !== null && due.some((card) => card.id === activeId)) {
       parts.push(`
-        <button class="defer-action" data-abandon="${esc(activeSlug)}">
+        <button class="defer-action" data-abandon="${esc(activeId)}">
           Je bloque sur cette révision · la revoir demain
         </button>
       `);
@@ -170,7 +187,7 @@ function focusBlockHtml(
   due: ProblemCard[],
   next: ProblemCard | undefined,
   now: Date,
-  activeSlug: string | null,
+  activeId: string | null,
 ): string {
   const focus = due[0];
   if (focus === undefined) {
@@ -189,13 +206,13 @@ function focusBlockHtml(
   }
 
   const count = due.length;
-  const verb = activeSlug === focus.slug ? "Reprendre" : "Commencer";
+  const verb = activeId === focus.id ? "Reprendre" : "Commencer";
   return `
     <main class="focus-card" aria-labelledby="focus-title">
       <div class="eyebrow">FOCUS DU JOUR</div>
       <h1 id="focus-title">${count} révision${count > 1 ? "s" : ""}</h1>
       <div class="focus-meta">${cardMetaHtml(focus)}</div>
-      <button class="primary-action" data-open="${esc(focus.slug)}" aria-label="Réviser ${esc(focus.title)}">
+      <button class="primary-action" data-open="${esc(focus.id)}" aria-label="Réviser ${esc(focus.title)}">
         <span>${verb} avec ${esc(focus.title)}</span>
         ${ICONS.arrow}
       </button>
@@ -235,14 +252,14 @@ function queueBlockHtml(
 // --- Bloc « Noter le dernier Accepted » ------------------------------------
 
 function pendingBlockHtml(pending: PendingAccepted): string {
-  const difficulty = pending.ncDifficulty.toLowerCase();
+  const difficulty = pending.problem.difficulty.toLowerCase();
   return `
     <main class="focus-card pending-card" id="pending" aria-labelledby="pending-title">
       <div class="eyebrow">ACTION REQUISE</div>
       <h1 id="pending-title">Noter le dernier Accepted</h1>
       <div class="pending-problem">
-        <span>${esc(pending.title)}</span>
-        <span class="difficulty difficulty-${difficulty}">${esc(pending.ncDifficulty)}</span>
+        <span>${esc(pending.problem.title)}</span>
+        <span class="difficulty difficulty-${difficulty}">${esc(pending.problem.difficulty)}</span>
       </div>
       <div class="field-label">Résolution</div>
       <div class="rate-row" data-group="mode">
@@ -273,7 +290,7 @@ async function refreshPendingPreview(pending: PendingAccepted): Promise<void> {
   try {
     const { scheduledDue } = await sendToBackground({
       kind: "PREVIEW_REVIEW",
-      slug: pending.slug,
+      problemId: pending.problemId,
       mode: pendingMode,
       feel: pendingFeel,
     });
@@ -285,15 +302,27 @@ async function refreshPendingPreview(pending: PendingAccepted): Promise<void> {
 
 function reviewFromPending(pending: PendingAccepted, mode: Mode, feel: Feel): ReviewInput {
   return {
-    slug: pending.slug,
-    title: pending.title,
-    ncDifficulty: pending.ncDifficulty,
-    listSlug: pending.listSlug,
-    metaIncomplete: pending.ncDifficulty === "Unknown",
+    problemId: pending.problemId,
+    problem: pending.problem,
     mode,
     feel,
     submissionsInSession: pending.submissionsInSession,
     minutesInSession: pending.minutesInSession,
+  };
+}
+
+function descriptorFromCard(card: ProblemCard): ProblemDescriptor {
+  const platform: Platform = card.sources.leetcode !== undefined ? "leetcode" : "neetcode";
+  const source = card.sources[platform];
+  if (source === undefined) throw new Error("Carte sans plateforme");
+  return {
+    platform,
+    slug: source.slug,
+    title: card.title,
+    difficulty: card.difficulty,
+    frontendId: source.frontendId,
+    listSlug: source.listSlug,
+    metaIncomplete: card.metaIncomplete === true,
   };
 }
 
@@ -312,25 +341,23 @@ function wire(cards: Record<string, ProblemCard>, pending: PendingAccepted | nul
 
   app.querySelectorAll<HTMLButtonElement>("[data-open]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const slug = btn.getAttribute("data-open");
-      if (slug !== null) void browser.tabs.create({ url: reviewProblemUrl(slug) });
+      const problemId = btn.getAttribute("data-open");
+      const card = problemId === null ? undefined : cards[problemId];
+      if (card !== undefined) void browser.tabs.create({ url: problemUrl(card) });
     });
   });
 
   const abandonBtn = app.querySelector<HTMLButtonElement>("[data-abandon]");
   abandonBtn?.addEventListener("click", () => {
-    const slug = abandonBtn.getAttribute("data-abandon");
-    const card = slug !== null ? cards[slug] : undefined;
+    const problemId = abandonBtn.getAttribute("data-abandon");
+    const card = problemId !== null ? cards[problemId] : undefined;
     if (!card) return;
     abandonBtn.disabled = true;
     void sendToBackground({
       kind: "LOG_REVIEW",
       review: {
-        slug: card.slug,
-        title: card.title,
-        ncDifficulty: card.ncDifficulty,
-        listSlug: card.listSlug,
-        metaIncomplete: card.metaIncomplete === true,
+        problemId: card.id,
+        problem: descriptorFromCard(card),
         mode: "abandon",
         feel: null,
         submissionsInSession: 0,
@@ -401,7 +428,7 @@ async function exportJson(): Promise<void> {
     .replace("T", "-");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `nccfsrs-export-${stamp}.json`;
+  a.download = `companion-export-${stamp}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 }

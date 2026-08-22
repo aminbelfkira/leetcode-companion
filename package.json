@@ -1,8 +1,8 @@
 {
-  "name": "neetcode-companion",
-  "description": "NeetCode Companion, révision espacée FSRS pour neetcode.io",
+  "name": "leetcode-neetcode-companion",
+  "description": "Companion, révision FSRS unifiée pour LeetCode et NeetCode",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -11,7 +11,6 @@
     "compile": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "safari": "wxt build && ./scripts/build-safari.sh",
     "postinstall": "wxt prepare"
   },
   "dependencies": {

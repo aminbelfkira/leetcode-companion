@@ -1,14 +1,14 @@
-// Bandeau neetcode.io. Shadow DOM, fine bande verte translucide injectée en
+// Bandeau commun LeetCode / NeetCode. Shadow DOM, fine bande translucide injectée en
 // haut de page quand des révisions sont dues.
 
 export interface BannerInfo {
   count: number;
-  next: { slug: string; title: string };
+  next: { id: string; title: string };
 }
 
 export interface BannerCallbacks {
   /** « Ouvrir » navigue vers le dû le plus ancien. */
-  onOpen(slug: string): void;
+  onOpen(problemId: string): void;
   /** « Plus tard » ou la croix reportent jusqu'au prochain minuit local. */
   onSnooze(): void;
 }
@@ -56,11 +56,11 @@ button:hover { background: rgba(72, 199, 142, .15); }
 let host: HTMLDivElement | null = null;
 let txtEl: HTMLElement | null = null;
 let callbacks: BannerCallbacks | null = null;
-let currentSlug = "";
+let currentProblemId = "";
 
 export function renderBanner(info: BannerInfo, cb: BannerCallbacks): void {
   callbacks = cb;
-  currentSlug = info.next.slug;
+  currentProblemId = info.next.id;
 
   if (host === null) {
     host = document.createElement("div");
@@ -83,7 +83,7 @@ export function renderBanner(info: BannerInfo, cb: BannerCallbacks): void {
 
     txtEl = banner.querySelector<HTMLElement>(".txt");
     banner.querySelector(".open")?.addEventListener("click", () => {
-      callbacks?.onOpen(currentSlug);
+      callbacks?.onOpen(currentProblemId);
     });
     const snooze = (): void => callbacks?.onSnooze();
     banner.querySelector(".later")?.addEventListener("click", snooze);

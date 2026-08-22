@@ -130,7 +130,7 @@ async function render(): Promise<void> {
       </p>
       ${
         snoozed
-          ? `<div class="actions"><button data-unsnooze>Réafficher le bandeau sur neetcode.io</button></div>`
+          ? `<div class="actions"><button data-unsnooze>Réafficher le bandeau sur LeetCode et NeetCode</button></div>`
           : ""
       }
     </div>

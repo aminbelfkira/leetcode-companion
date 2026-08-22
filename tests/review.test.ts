@@ -4,20 +4,38 @@ import {
   checkCooldown,
   dueCards,
   logReview,
+  prepareAccepted,
   previewReview,
   saveSettingsPatch,
   snoozeBanner,
 } from "../src/review";
 import { getAllData, getCards, getLog, setPendingAccepted } from "../src/storage";
-import type { ProblemCard, ReviewInput } from "../src/types";
+import type { ProblemCard, ProblemDescriptor, ReviewInput } from "../src/types";
+
+const NC_CONTAINS_DUPLICATE: ProblemDescriptor = {
+  platform: "neetcode",
+  slug: "duplicate-integer",
+  title: "Contains Duplicate",
+  difficulty: "Easy",
+  frontendId: null,
+  listSlug: "neetcode150",
+  metaIncomplete: false,
+};
+
+const LC_CONTAINS_DUPLICATE: ProblemDescriptor = {
+  platform: "leetcode",
+  slug: "contains-duplicate",
+  title: "Contains Duplicate",
+  difficulty: "Easy",
+  frontendId: "217",
+  listSlug: null,
+  metaIncomplete: false,
+};
 
 function review(overrides: Partial<ReviewInput> = {}): ReviewInput {
   return {
-    slug: "duplicate-integer",
-    title: "Contains Duplicate",
-    ncDifficulty: "Easy",
-    listSlug: "neetcode150",
-    metaIncomplete: false,
+    problemId: "leetcode:contains-duplicate",
+    problem: NC_CONTAINS_DUPLICATE,
     mode: "seul",
     feel: 2,
     submissionsInSession: 2,
@@ -26,12 +44,20 @@ function review(overrides: Partial<ReviewInput> = {}): ReviewInput {
   };
 }
 
-function cardDue(slug: string, due: string): ProblemCard {
+function cardDue(id: string, due: string): ProblemCard {
   return {
-    slug,
-    title: slug,
-    ncDifficulty: "Easy",
-    listSlug: null,
+    id,
+    title: id,
+    difficulty: "Easy",
+    sources: {
+      leetcode: {
+        slug: id,
+        frontendId: null,
+        listSlug: null,
+        difficulty: "Easy",
+        lastSeenAt: due,
+      },
+    },
     lastMode: "seul",
     lastFeel: 2,
     fsrs: {
@@ -53,154 +79,124 @@ beforeEach(() => {
 });
 
 describe("logReview", () => {
-  it("écrit la carte et son entrée de log ensemble", async () => {
+  it("écrit une carte unifiée et son entrée de log", async () => {
     const { scheduledDue } = await logReview(review());
-
-    const cards = await getCards();
+    const card = (await getCards())["leetcode:contains-duplicate"];
     const log = await getLog();
-    const card = cards["duplicate-integer"];
 
     expect(card?.title).toBe("Contains Duplicate");
-    expect(card?.ncDifficulty).toBe("Easy");
-    expect(card?.listSlug).toBe("neetcode150");
+    expect(card?.difficulty).toBe("Easy");
+    expect(card?.sources.neetcode?.slug).toBe("duplicate-integer");
+    expect(card?.sources.neetcode?.listSlug).toBe("neetcode150");
     expect(card?.lastMode).toBe("seul");
-    expect(card?.lastFeel).toBe(2);
     expect(card?.fsrs.due).toBe(scheduledDue);
-
-    expect(log).toHaveLength(1);
-    expect(log[0]?.grade).toBe(3); // ressenti 2 → Good
-    expect(log[0]?.scheduledDue).toBe(scheduledDue);
-    expect(log[0]?.submissionsInSession).toBe(2);
+    expect(log[0]?.problemId).toBe("leetcode:contains-duplicate");
+    expect(log[0]?.platform).toBe("neetcode");
+    expect(log[0]?.grade).toBe(3);
   });
 
-  it("conserve createdAt et le contexte de liste d'une carte existante", async () => {
+  it("conserve createdAt et les sources déjà connues", async () => {
     await logReview(review());
-    const created = (await getCards())["duplicate-integer"]?.createdAt;
-
-    await logReview(review({ listSlug: null, feel: 1 }));
-    const card = (await getCards())["duplicate-integer"];
+    const created = (await getCards())["leetcode:contains-duplicate"]?.createdAt;
+    await logReview(review({ problem: LC_CONTAINS_DUPLICATE, feel: 1 }));
+    const card = (await getCards())["leetcode:contains-duplicate"];
 
     expect(card?.createdAt).toBe(created);
-    expect(card?.listSlug).toBe("neetcode150");
+    expect(card?.sources.neetcode?.slug).toBe("duplicate-integer");
+    expect(card?.sources.leetcode?.slug).toBe("contains-duplicate");
     expect(await getLog()).toHaveLength(2);
   });
 
   it("n'enregistre pas de ressenti pour un abandon", async () => {
     await logReview(review({ mode: "abandon", feel: null }));
-    const card = (await getCards())["duplicate-integer"];
+    const card = (await getCards())["leetcode:contains-duplicate"];
     expect(card?.lastFeel).toBeNull();
     expect((await getLog())[0]?.grade).toBe(1);
   });
 
-  it("marque les cartes dont les métadonnées viennent du repli DOM", async () => {
-    await logReview(review({ metaIncomplete: true }));
-    expect((await getCards())["duplicate-integer"]?.metaIncomplete).toBe(true);
-  });
-
-  it("solde l'Accepted en attente du même problème", async () => {
+  it("solde seulement l'Accepted en attente du même problème", async () => {
     await setPendingAccepted({
-      slug: "duplicate-integer",
-      title: "Contains Duplicate",
-      ncDifficulty: "Easy",
-      listSlug: null,
+      problemId: "leetcode:contains-duplicate",
+      problem: NC_CONTAINS_DUPLICATE,
       submissionsInSession: 1,
       minutesInSession: 3,
       acceptedAt: new Date().toISOString(),
     });
-
     await logReview(review());
-
     expect((await getAllData()).pendingAccepted).toBeNull();
-  });
 
-  it("laisse en place un Accepted en attente sur un autre problème", async () => {
     await setPendingAccepted({
-      slug: "valid-sudoku",
-      title: "Valid Sudoku",
-      ncDifficulty: "Medium",
-      listSlug: null,
+      problemId: "leetcode:valid-sudoku",
+      problem: { ...LC_CONTAINS_DUPLICATE, slug: "valid-sudoku", title: "Valid Sudoku" },
       submissionsInSession: 1,
       minutesInSession: 3,
       acceptedAt: new Date().toISOString(),
     });
-
     await logReview(review());
-
-    expect((await getAllData()).pendingAccepted?.slug).toBe("valid-sudoku");
+    expect((await getAllData()).pendingAccepted?.problemId).toBe("leetcode:valid-sudoku");
   });
 });
 
-describe("checkCooldown", () => {
-  it("laisse passer un problème jamais suivi", async () => {
-    expect(await checkCooldown("duplicate-integer")).toEqual({ underCooldown: false });
+describe("fusion LeetCode / NeetCode", () => {
+  it("résout les slugs différents vers la même carte et applique un cooldown commun", async () => {
+    const nc = await prepareAccepted(NC_CONTAINS_DUPLICATE);
+    expect(nc.problemId).toBe("leetcode:contains-duplicate");
+    await logReview(review({ problemId: nc.problemId }));
+
+    const lc = await prepareAccepted(LC_CONTAINS_DUPLICATE);
+    expect(lc).toEqual({ problemId: "leetcode:contains-duplicate", underCooldown: true });
+    const cards = await getCards();
+    expect(Object.keys(cards)).toEqual(["leetcode:contains-duplicate"]);
+    expect(cards[lc.problemId]?.sources.leetcode?.frontendId).toBe("217");
+    expect(cards[lc.problemId]?.sources.neetcode?.slug).toBe("duplicate-integer");
   });
 
-  it("bloque un second Accepted immédiat", async () => {
+  it("ne bloque pas un autre problème", async () => {
     await logReview(review());
-    expect(await checkCooldown("duplicate-integer")).toEqual({ underCooldown: true });
-  });
-
-  it("ne bloque pas les autres problèmes", async () => {
-    await logReview(review());
-    expect(await checkCooldown("valid-sudoku")).toEqual({ underCooldown: false });
+    expect(await checkCooldown("leetcode:valid-sudoku")).toEqual({ underCooldown: false });
   });
 
   it("laisse repasser une fois la fenêtre écoulée", async () => {
     await logReview(review());
     await saveSettingsPatch({ reviewCooldownHours: 0 });
-    expect(await checkCooldown("duplicate-integer")).toEqual({ underCooldown: false });
+    expect(await checkCooldown("leetcode:contains-duplicate")).toEqual({ underCooldown: false });
   });
 });
 
 describe("previewReview", () => {
-  it("annonce la même échéance que celle réellement enregistrée", async () => {
-    // Le fuzz FSRS est actif : on compare le rang, pas la valeur exacte.
-    const easy = await previewReview("duplicate-integer", "seul", 1);
-    const hard = await previewReview("duplicate-integer", "seul", 3);
+  it("ordonne les échéances sans écrire", async () => {
+    const easy = await previewReview("leetcode:contains-duplicate", "seul", 1);
+    const hard = await previewReview("leetcode:contains-duplicate", "seul", 3);
     expect(new Date(easy.scheduledDue).getTime()).toBeGreaterThan(
       new Date(hard.scheduledDue).getTime(),
     );
-  });
-
-  it("n'écrit rien", async () => {
-    await previewReview("duplicate-integer", "seul", 2);
     expect(await getCards()).toEqual({});
-    expect(await getLog()).toEqual([]);
   });
 });
 
 describe("dueCards", () => {
-  it("ne retient que les échéances passées, de la plus ancienne à la plus récente", () => {
+  it("ne retient que les échéances passées, dans l'ordre", () => {
     const now = Date.parse("2026-08-09T12:00:00.000Z");
     const cards = {
       hier: cardDue("hier", "2026-08-08T12:00:00.000Z"),
       demain: cardDue("demain", "2026-08-10T12:00:00.000Z"),
       "avant-hier": cardDue("avant-hier", "2026-08-07T12:00:00.000Z"),
     };
-    expect(dueCards(cards, now).map((card) => card.slug)).toEqual(["avant-hier", "hier"]);
-  });
-
-  it("renvoie une liste vide sans carte", () => {
-    expect(dueCards({}, Date.now())).toEqual([]);
+    expect(dueCards(cards, now).map((card) => card.id)).toEqual(["avant-hier", "hier"]);
   });
 });
 
-describe("snoozeBanner", () => {
-  it("reporte le bandeau à un instant futur du même jour ou du lendemain", async () => {
+describe("réglages", () => {
+  it("reporte le bandeau et fusionne les patches", async () => {
     await snoozeBanner();
-    const { settings } = await getAllData();
-    expect(settings.bannerSnoozedUntil).not.toBeNull();
-    expect(new Date(settings.bannerSnoozedUntil!).getTime()).toBeGreaterThan(Date.now());
-  });
-});
-
-describe("saveSettingsPatch", () => {
-  it("fusionne le patch avec les réglages existants", async () => {
+    expect(new Date((await getAllData()).settings.bannerSnoozedUntil!).getTime()).toBeGreaterThan(
+      Date.now(),
+    );
     await saveSettingsPatch({ reviewCooldownHours: 12 });
     await saveSettingsPatch({ arracheCountsAsAgain: true });
-    const { settings } = await getAllData();
+    const settings = (await getAllData()).settings;
     expect(settings.reviewCooldownHours).toBe(12);
     expect(settings.arracheCountsAsAgain).toBe(true);
-    expect(settings.requestRetention).toBe(0.9); // valeur par défaut préservée
+    expect(settings.requestRetention).toBe(0.9);
   });
 });

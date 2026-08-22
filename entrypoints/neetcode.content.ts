@@ -7,15 +7,15 @@ import {
   isAcceptedVerdict,
   listSlugFromSearch,
   problemSlugFromPathname,
-  reviewProblemUrl,
 } from "../src/nc-endpoints";
 import { resolveMeta } from "../src/nc-meta";
 import { sendToBackground } from "../src/messaging";
+import { findExistingProblemId, problemUrl } from "../src/problem-identity";
 import { dueCards } from "../src/review";
 import { getCards, getSettings } from "../src/storage";
 import { removeBanner, renderBanner } from "../src/ui/banner";
 import { isPanelMounted, mountPanel } from "../src/ui/panel";
-import type { PageMessage } from "../src/types";
+import type { PageMessage, ProblemDescriptor } from "../src/types";
 
 interface ProblemSession {
   slug: string;
@@ -81,14 +81,27 @@ export default defineContentScript({
       if (metaRepairTried.has(slug)) return;
       metaRepairTried.add(slug);
       const cards = await getCards();
-      if (cards[slug]?.metaIncomplete !== true) return;
+      const partial: ProblemDescriptor = {
+        platform: "neetcode",
+        slug,
+        title: slug,
+        difficulty: "Unknown",
+        frontendId: null,
+        listSlug: listSlugFromSearch(location.search),
+        metaIncomplete: true,
+      };
+      const problemId = findExistingProblemId(cards, partial);
+      if (problemId === null || cards[problemId]?.metaIncomplete !== true) return;
       const meta = await resolveMeta(slug);
       if (meta.metaIncomplete) return; // toujours en échec, on retentera plus tard
       await sendToBackground({
         kind: "UPDATE_CARD_META",
-        slug,
-        title: meta.title,
-        ncDifficulty: meta.ncDifficulty,
+        problem: {
+          ...partial,
+          title: meta.title,
+          difficulty: meta.difficulty,
+          metaIncomplete: false,
+        },
       });
       console.log(`${LOG_PREFIX} métadonnées réparées`, slug);
     }
@@ -157,22 +170,32 @@ export default defineContentScript({
     async function handleAccepted(snapshot: AcceptedSnapshot): Promise<void> {
       if (isPanelMounted()) return;
 
-      const { underCooldown } = await sendToBackground({
-        kind: "CHECK_COOLDOWN",
+      const meta = await resolveMeta(snapshot.slug);
+      const problem: ProblemDescriptor = {
+        platform: "neetcode",
         slug: snapshot.slug,
+        title: meta.title,
+        difficulty: meta.difficulty,
+        frontendId: null,
+        listSlug: snapshot.listSlug,
+        metaIncomplete: meta.metaIncomplete,
+      };
+      const { problemId, underCooldown } = await sendToBackground({
+        kind: "PREPARE_ACCEPTED",
+        problem,
       });
       if (underCooldown) {
         console.log(`${LOG_PREFIX} Accepted ignoré (cooldown)`, snapshot.slug);
         return;
       }
 
-      const meta = await resolveMeta(snapshot.slug);
       const acceptedAt = new Date().toISOString();
 
       mountPanel(
         {
           title: meta.title,
-          ncDifficulty: meta.ncDifficulty,
+          difficulty: meta.difficulty,
+          platform: "NeetCode",
           submissionsInSession: snapshot.submissionsInSession,
           minutesInSession: snapshot.minutesInSession,
         },
@@ -180,7 +203,7 @@ export default defineContentScript({
           previewDue: async (mode, feel) => {
             const { scheduledDue } = await sendToBackground({
               kind: "PREVIEW_REVIEW",
-              slug: snapshot.slug,
+              problemId,
               mode,
               feel,
             });
@@ -191,11 +214,8 @@ export default defineContentScript({
               const { scheduledDue } = await sendToBackground({
                 kind: "LOG_REVIEW",
                 review: {
-                  slug: snapshot.slug,
-                  title: meta.title,
-                  ncDifficulty: meta.ncDifficulty,
-                  listSlug: snapshot.listSlug,
-                  metaIncomplete: meta.metaIncomplete,
+                  problemId,
+                  problem,
                   mode,
                   feel,
                   submissionsInSession: snapshot.submissionsInSession,
@@ -212,10 +232,8 @@ export default defineContentScript({
             void sendToBackground({
               kind: "SET_PENDING_ACCEPTED",
               pending: {
-                slug: snapshot.slug,
-                title: meta.title,
-                ncDifficulty: meta.ncDifficulty,
-                listSlug: snapshot.listSlug,
+                problemId,
+                problem,
                 submissionsInSession: snapshot.submissionsInSession,
                 minutesInSession: snapshot.minutesInSession,
                 acceptedAt,
@@ -243,9 +261,12 @@ export default defineContentScript({
           return;
         }
         renderBanner(
-          { count: due.length, next: { slug: oldest.slug, title: oldest.title } },
+          { count: due.length, next: { id: oldest.id, title: oldest.title } },
           {
-            onOpen: (slug) => location.assign(reviewProblemUrl(slug)),
+            onOpen: (problemId) => {
+              const card = cards[problemId];
+              if (card !== undefined) location.assign(problemUrl(card, "neetcode"));
+            },
             onSnooze: () => {
               void sendToBackground({ kind: "SNOOZE_BANNER" }).catch((err: unknown) =>
                 console.warn(`${LOG_PREFIX} snooze`, err),
