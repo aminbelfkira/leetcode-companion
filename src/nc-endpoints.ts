@@ -51,6 +51,12 @@ export function listSlugFromSearch(search: string): string | null {
   return /^[a-z0-9][a-z0-9_-]{0,99}$/.test(value) ? value : null;
 }
 
+/** Index de la soumission affichée après la navigation vers l'historique. */
+export function submissionIndexFromSearch(search: string): string | null {
+  const value = new URLSearchParams(search).get("submissionIndex")?.trim();
+  return value && /^\d+$/.test(value) ? value : null;
+}
+
 export function parseDifficulty(value: unknown): Difficulty {
   return value === "Easy" || value === "Medium" || value === "Hard" ? value : "Unknown";
 }

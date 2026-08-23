@@ -7,6 +7,7 @@ import {
   isAcceptedVerdict,
   listSlugFromSearch,
   problemSlugFromPathname,
+  submissionIndexFromSearch,
 } from "../src/nc-endpoints";
 import { resolveMeta } from "../src/nc-meta";
 import { sendToBackground } from "../src/messaging";
@@ -44,6 +45,21 @@ export default defineContentScript({
     const submissionLists = new Map<string, string | null>();
     const MAX_SUBMISSION_CONTEXTS = 128;
 
+    interface DomAcceptedFallback {
+      token: string;
+      slug: string;
+      listSlug: string | null;
+      submissionsInSession: number;
+      sessionStartedAt: number;
+      initialSubmissionIndex: string | null;
+      acceptedInitiallyVisible: boolean;
+      expiresAt: number;
+      timer: number | null;
+    }
+
+    let domAcceptedFallback: DomAcceptedFallback | null = null;
+    const handledAcceptedTokens = new Set<string>();
+
     function rememberSubmissionList(token: string): void {
       submissionLists.set(token, listSlugFromSearch(location.search));
       while (submissionLists.size > MAX_SUBMISSION_CONTEXTS) {
@@ -59,6 +75,97 @@ export default defineContentScript({
         : listSlugFromSearch(location.search);
       submissionLists.delete(token);
       return value;
+    }
+
+    function acceptedResultVisible(): boolean {
+      return [...document.querySelectorAll<HTMLElement>(".submission-result-accepted")].some(
+        (element) =>
+          element.getClientRects().length > 0 && isAcceptedVerdict(element.textContent),
+      );
+    }
+
+    function cancelDomAcceptedFallback(token?: string): void {
+      if (domAcceptedFallback === null) return;
+      if (token !== undefined && domAcceptedFallback.token !== token) return;
+      if (domAcceptedFallback.timer !== null) window.clearTimeout(domAcceptedFallback.timer);
+      domAcceptedFallback = null;
+    }
+
+    function handleAcceptedOnce(
+      token: string,
+      snapshot: AcceptedSnapshot,
+      source: "network" | "dom",
+    ): void {
+      if (handledAcceptedTokens.has(token)) return;
+      handledAcceptedTokens.add(token);
+      while (handledAcceptedTokens.size > MAX_SUBMISSION_CONTEXTS) {
+        const oldest = handledAcceptedTokens.values().next().value;
+        if (oldest === undefined) break;
+        handledAcceptedTokens.delete(oldest);
+      }
+      console.log(`${LOG_PREFIX} ✓ Accepted détecté`, { ...snapshot, source });
+      handleAccepted(snapshot).catch((err: unknown) =>
+        console.warn(`${LOG_PREFIX} handleAccepted`, err),
+      );
+    }
+
+    /**
+     * NeetCode affiche le verdict puis navigue vers /history?submissionIndex=….
+     * Ce repli ne s'arme qu'après un vrai départ de soumission et ne lit jamais
+     * une ancienne page d'historique comme un nouvel Accepted.
+     */
+    function armDomAcceptedFallback(
+      token: string,
+      current: ProblemSession,
+      listSlug: string | null,
+    ): void {
+      cancelDomAcceptedFallback();
+      const fallback: DomAcceptedFallback = {
+        token,
+        slug: current.slug,
+        listSlug,
+        submissionsInSession: current.submitCount,
+        sessionStartedAt: current.startedAt,
+        initialSubmissionIndex: submissionIndexFromSearch(location.search),
+        acceptedInitiallyVisible: acceptedResultVisible(),
+        expiresAt: Date.now() + 30_000,
+        timer: null,
+      };
+      domAcceptedFallback = fallback;
+
+      function poll(): void {
+        if (domAcceptedFallback !== fallback) return;
+        const currentIndex = submissionIndexFromSearch(location.search);
+        const submissionChanged =
+          currentIndex !== null && currentIndex !== fallback.initialSubmissionIndex;
+        const acceptedNow = acceptedResultVisible();
+        if (
+          problemSlugFromPathname(location.pathname) === fallback.slug &&
+          acceptedNow &&
+          (submissionChanged || !fallback.acceptedInitiallyVisible)
+        ) {
+          domAcceptedFallback = null;
+          submissionLists.delete(fallback.token);
+          handleAcceptedOnce(
+            fallback.token,
+            {
+              slug: fallback.slug,
+              listSlug: fallback.listSlug,
+              submissionsInSession: fallback.submissionsInSession,
+              minutesInSession: Math.round((Date.now() - fallback.sessionStartedAt) / 60_000),
+            },
+            "dom",
+          );
+          return;
+        }
+        if (Date.now() >= fallback.expiresAt) {
+          domAcceptedFallback = null;
+          return;
+        }
+        fallback.timer = window.setTimeout(poll, 300);
+      }
+
+      fallback.timer = window.setTimeout(poll, 300);
     }
 
     function ensureSession(slug: string): ProblemSession {
@@ -139,6 +246,11 @@ export default defineContentScript({
           const current = ensureSession(slug);
           current.submitCount += 1;
           rememberSubmissionList(msg.payload.token);
+          armDomAcceptedFallback(
+            msg.payload.token,
+            current,
+            submissionLists.get(msg.payload.token) ?? null,
+          );
           console.log(`${LOG_PREFIX} soumission créée`, {
             token: msg.payload.token,
             slug: current.slug,
@@ -149,6 +261,7 @@ export default defineContentScript({
         case "submission-result": {
           const { token, statusDescription } = msg.payload;
           console.log(`${LOG_PREFIX} submission-result`, { token, statusDescription });
+          cancelDomAcceptedFallback(token);
           const listSlug = takeSubmissionList(token);
           if (!isAcceptedVerdict(statusDescription) || session === null) break;
           const snapshot: AcceptedSnapshot = {
@@ -157,10 +270,7 @@ export default defineContentScript({
             submissionsInSession: session.submitCount,
             minutesInSession: Math.round((Date.now() - session.startedAt) / 60_000),
           };
-          console.log(`${LOG_PREFIX} ✓ Accepted détecté`, snapshot);
-          handleAccepted(snapshot).catch((err: unknown) =>
-            console.warn(`${LOG_PREFIX} handleAccepted`, err),
-          );
+          handleAcceptedOnce(token, snapshot, "network");
           break;
         }
       }

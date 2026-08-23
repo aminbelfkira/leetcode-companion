@@ -138,17 +138,23 @@ describe("logReview", () => {
 });
 
 describe("fusion LeetCode / NeetCode", () => {
-  it("résout les slugs différents vers la même carte et applique un cooldown commun", async () => {
+  it("garde une carte commune mais laisse noter un Accepted sur l'autre plateforme", async () => {
     const nc = await prepareAccepted(NC_CONTAINS_DUPLICATE);
     expect(nc.problemId).toBe("leetcode:contains-duplicate");
     await logReview(review({ problemId: nc.problemId }));
 
     const lc = await prepareAccepted(LC_CONTAINS_DUPLICATE);
-    expect(lc).toEqual({ problemId: "leetcode:contains-duplicate", underCooldown: true });
+    expect(lc).toEqual({ problemId: "leetcode:contains-duplicate", underCooldown: false });
     const cards = await getCards();
     expect(Object.keys(cards)).toEqual(["leetcode:contains-duplicate"]);
     expect(cards[lc.problemId]?.sources.leetcode?.frontendId).toBe("217");
     expect(cards[lc.problemId]?.sources.neetcode?.slug).toBe("duplicate-integer");
+  });
+
+  it("bloque seulement un Accepted répété sur la même plateforme", async () => {
+    await logReview(review());
+    expect(await prepareAccepted(NC_CONTAINS_DUPLICATE)).toMatchObject({ underCooldown: true });
+    expect(await prepareAccepted(LC_CONTAINS_DUPLICATE)).toMatchObject({ underCooldown: false });
   });
 
   it("ne bloque pas un autre problème", async () => {

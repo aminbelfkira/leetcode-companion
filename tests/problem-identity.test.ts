@@ -25,6 +25,9 @@ describe("identité canonique", () => {
     expect(preferredProblemId(nc("linked-list-cycle-detection", "Linked List Cycle Detection"))).toBe(
       "leetcode:linked-list-cycle",
     );
+    expect(preferredProblemId(nc("two-integer-sum-ii", "Two Integer Sum II"))).toBe(
+      "leetcode:two-sum-ii-input-array-is-sorted",
+    );
   });
 
   it("normalise casse, ponctuation et accents", () => {

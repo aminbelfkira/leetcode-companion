@@ -53,8 +53,9 @@ La résolution d'identité suit cet ordre :
 3. titre normalisé (casse, accents et ponctuation ignorés) ;
 4. rapprochement conservateur pour une variation mineure et non ambiguë du titre.
 
-La carte commune garde ensuite les deux sources. Le cooldown est appliqué à cette carte, pas au
-site : résoudre le même problème sur l'autre plateforme ne crée donc pas une deuxième révision.
+La carte commune garde ensuite les deux sources. Le cooldown bloque les Accepted répétés sur un
+même site, mais une résolution sur l'autre plateforme est tout de même proposée et met à jour la
+même carte — sans créer de doublon.
 
 ## Installation dans Chrome
 

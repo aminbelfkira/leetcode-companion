@@ -19,6 +19,7 @@ import {
 import type {
   Feel,
   Mode,
+  Platform,
   ProblemCard,
   ProblemDescriptor,
   ReviewInput,
@@ -43,9 +44,18 @@ function mergedTitle(existing: ProblemCard | undefined, problem: ProblemDescript
   return problem.title;
 }
 
-export async function checkCooldown(problemId: string): Promise<{ underCooldown: boolean }> {
+export async function checkCooldown(
+  problemId: string,
+  platform?: Platform,
+): Promise<{ underCooldown: boolean }> {
   const [log, settings] = await Promise.all([getLog(), getSettings()]);
-  const lastTs = log.filter((entry) => entry.problemId === problemId).at(-1)?.ts;
+  const lastTs = log
+    .filter(
+      (entry) =>
+        entry.problemId === problemId &&
+        (platform === undefined || entry.platform === platform),
+    )
+    .at(-1)?.ts;
   if (lastTs === undefined) return { underCooldown: false };
   const elapsedHours = (Date.now() - new Date(lastTs).getTime()) / 3_600_000;
   return { underCooldown: elapsedHours < settings.reviewCooldownHours };
@@ -77,7 +87,7 @@ export async function prepareAccepted(
       updatedAt: now,
     });
   }
-  return { problemId, ...(await checkCooldown(problemId)) };
+  return { problemId, ...(await checkCooldown(problemId, problem.platform)) };
 }
 
 export async function previewReview(

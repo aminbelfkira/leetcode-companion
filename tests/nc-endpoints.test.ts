@@ -5,6 +5,7 @@ import {
   parseDifficulty,
   problemSlugFromPathname,
   reviewProblemUrl,
+  submissionIndexFromSearch,
   submitKindForRequest,
   verdictFromResponse,
 } from "../src/nc-endpoints";
@@ -148,6 +149,15 @@ describe("listSlugFromSearch", () => {
     expect(listSlugFromSearch("")).toBeNull();
     expect(listSlugFromSearch("?list=")).toBeNull();
     expect(listSlugFromSearch("?list=../etc")).toBeNull();
+  });
+});
+
+describe("submissionIndexFromSearch", () => {
+  it("lit uniquement un index numérique de l'historique", () => {
+    expect(submissionIndexFromSearch("?list=neetcode150&submissionIndex=3")).toBe("3");
+    expect(submissionIndexFromSearch("?submissionIndex=-1")).toBeNull();
+    expect(submissionIndexFromSearch("?submissionIndex=abc")).toBeNull();
+    expect(submissionIndexFromSearch("")).toBeNull();
   });
 });
 
