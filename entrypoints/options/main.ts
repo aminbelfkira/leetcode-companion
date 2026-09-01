@@ -6,11 +6,14 @@ import type {
   GithubSyncStatus,
 } from "../../src/github/types";
 import { sendToBackground } from "../../src/messaging";
+import type { SupabaseSyncStatus } from "../../src/types";
 
 const app = document.querySelector<HTMLElement>("#app");
+const cloudApp = document.querySelector<HTMLElement>("#cloud-app");
 let pollTimer: number | null = null;
 let repositories: GithubRepository[] = [];
 let showRepositoryPicker = false;
+let cloudNotice: string | null = null;
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
@@ -27,6 +30,139 @@ function formatDate(value: string | null): string {
 function stopPolling(): void {
   if (pollTimer !== null) window.clearTimeout(pollTimer);
   pollTimer = null;
+}
+
+async function cloudStatus(): Promise<SupabaseSyncStatus> {
+  return sendToBackground({ kind: "SUPABASE_GET_STATUS" });
+}
+
+function redirectUrlHtml(current: SupabaseSyncStatus): string {
+  if (current.redirectUrl === null) return "";
+  return `
+    <div class="callback-box">
+      <span>URL de retour à autoriser dans Supabase</span>
+      <code>${escapeHtml(current.redirectUrl)}</code>
+      <button class="secondary compact" type="button" data-copy-cloud-redirect>Copier</button>
+    </div>`;
+}
+
+function bindRedirectCopy(current: SupabaseSyncStatus): void {
+  if (current.redirectUrl === null) return;
+  cloudApp
+    ?.querySelector<HTMLButtonElement>("[data-copy-cloud-redirect]")
+    ?.addEventListener("click", (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      void navigator.clipboard.writeText(current.redirectUrl ?? "").then(() => {
+        button.textContent = "Copié";
+      });
+    });
+}
+
+async function renderCloud(): Promise<void> {
+  if (cloudApp === null) return;
+  try {
+    const current = await cloudStatus();
+    if (!current.available) {
+      cloudApp.innerHTML = `
+        <div class="panel warning">
+          <h2>Supabase non configuré</h2>
+          <p>Ajoute l'URL et la clé publique du projet au build, puis applique la migration SQL fournie dans le dépôt.</p>
+          <code>WXT_SUPABASE_URL</code> · <code>WXT_SUPABASE_PUBLISHABLE_KEY</code>
+          ${redirectUrlHtml(current)}
+        </div>`;
+      bindRedirectCopy(current);
+      return;
+    }
+    if (!current.connected) {
+      renderCloudDisconnected(current);
+      return;
+    }
+    renderCloudConnected(current);
+  } catch (error) {
+    renderCloudError(error);
+  }
+}
+
+function renderCloudDisconnected(current: SupabaseSyncStatus): void {
+  if (cloudApp === null) return;
+  const error = current.lastError === null
+    ? ""
+    : `<div class="sync-error"><b>Dernière erreur</b><span>${escapeHtml(current.lastError)}</span></div>`;
+  const notice = cloudNotice === null ? "" : `<div class="notice">${escapeHtml(cloudNotice)}</div>`;
+  cloudApp.innerHTML = `
+    <div class="panel">
+      <p>Connecte ton compte GitHub pour migrer les données locales existantes et retrouver le même planning sur tes autres navigateurs.</p>
+      ${notice}
+      ${error}
+      <div class="actions">
+        <button class="primary github-login" type="button" data-cloud-github>Continuer avec GitHub</button>
+      </div>
+      ${redirectUrlHtml(current)}
+    </div>`;
+  bindRedirectCopy(current);
+  cloudApp.querySelector<HTMLButtonElement>("[data-cloud-github]")?.addEventListener("click", (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    cloudNotice = null;
+    void sendToBackground({ kind: "SUPABASE_SIGN_IN_GITHUB" })
+      .then(() => {
+        cloudNotice = "Connexion GitHub réussie et données synchronisées.";
+        return renderCloud();
+      })
+      .catch(renderCloudError);
+  });
+}
+
+function renderCloudConnected(current: SupabaseSyncStatus): void {
+  if (cloudApp === null) return;
+  const dirty = current.dirty
+    ? `<div class="status-line syncing"><span class="status-dot"></span> Modifications locales en attente</div>`
+    : `<div class="status-line"><span class="status-dot"></span> Données synchronisées</div>`;
+  const error = current.lastError === null
+    ? ""
+    : `<div class="sync-error"><b>Synchronisation en attente</b><span>${escapeHtml(current.lastError)}</span></div>`;
+  const notice = cloudNotice === null ? "" : `<div class="notice">${escapeHtml(cloudNotice)}</div>`;
+  cloudApp.innerHTML = `
+    <div class="panel enabled">
+      ${dirty}
+      <h2>${escapeHtml(current.userLogin === null ? current.email ?? "Compte GitHub" : `@${current.userLogin}`)}</h2>
+      <p>Les cartes, le journal et les réglages restent disponibles hors ligne et sont fusionnés avec le snapshot distant.</p>
+      ${notice}
+      <dl>
+        <div><dt>Dernière synchronisation</dt><dd>${escapeHtml(formatDate(current.lastSyncAt))}</dd></div>
+        ${current.email === null ? "" : `<div><dt>Email GitHub</dt><dd>${escapeHtml(current.email)}</dd></div>`}
+        <div><dt>Stockage local</dt><dd>conservé</dd></div>
+      </dl>
+      ${error}
+      <div class="actions">
+        <button class="primary" data-cloud-sync>Synchroniser maintenant</button>
+        <button class="danger" data-cloud-signout>Se déconnecter</button>
+      </div>
+    </div>`;
+  cloudApp.querySelector<HTMLButtonElement>("[data-cloud-sync]")?.addEventListener("click", (event) => {
+    (event.currentTarget as HTMLButtonElement).disabled = true;
+    cloudNotice = null;
+    void sendToBackground({ kind: "SUPABASE_SYNC_NOW" }).then(renderCloud).catch(renderCloudError);
+  });
+  cloudApp.querySelector<HTMLButtonElement>("[data-cloud-signout]")?.addEventListener("click", (event) => {
+    (event.currentTarget as HTMLButtonElement).disabled = true;
+    cloudNotice = null;
+    void sendToBackground({ kind: "SUPABASE_SIGN_OUT" }).then(renderCloud).catch(renderCloudError);
+  });
+}
+
+function renderCloudError(error: unknown): void {
+  if (cloudApp === null) return;
+  const message = error instanceof Error ? error.message : String(error);
+  cloudApp.innerHTML = `
+    <div class="panel warning">
+      <h2>Impossible de synchroniser Supabase</h2>
+      <p class="error">${escapeHtml(message)}</p>
+      <button class="secondary" data-cloud-back>Revenir</button>
+    </div>`;
+  cloudApp.querySelector<HTMLButtonElement>("[data-cloud-back]")?.addEventListener("click", () => {
+    void renderCloud();
+  });
 }
 
 async function status(): Promise<GithubSyncStatus> {
@@ -204,7 +340,7 @@ async function renderRepositorySelection(current: GithubSyncStatus): Promise<voi
     app.innerHTML = `
       <div class="panel warning">
         <h2>Aucun dépôt autorisé</h2>
-        <p>Installe LeetCode Companion sur un dépôt GitHub, puis actualise cette liste.</p>
+        <p>Installe Companion sur un dépôt GitHub, puis actualise cette liste.</p>
         <div class="actions">
           ${
             current.installationUrl === null
@@ -272,7 +408,7 @@ function renderEnabled(current: GithubSyncStatus): void {
     <div class="panel enabled">
       <div class="status-line"><span class="status-dot"></span> Synchronisation active</div>
       <h2>${escapeHtml(current.repository.fullName)}</h2>
-      <p>Chaque nouvel Accepted met à jour automatiquement le fichier de solution.</p>
+      <p>Chaque nouvel Accepted LeetCode met à jour automatiquement le fichier de solution.</p>
       <dl>
         <div><dt>Dernière synchronisation</dt><dd>${escapeHtml(formatDate(current.lastSyncAt))}</dd></div>
         <div><dt>Fichier</dt><dd>${escapeHtml(current.lastSyncedPath ?? "—")}</dd></div>
@@ -313,4 +449,4 @@ function renderError(error: unknown): void {
   });
 }
 
-void render();
+void Promise.all([renderCloud(), render()]);

@@ -22,6 +22,11 @@ h2 { margin: 0 0 8px; font-size: 17px; }
 p { margin: 0 0 16px; color: var(--muted); line-height: 1.55; }
 header p { max-width: 580px; font-size: 15px; }
 .steps { display: grid; gap: 12px; }
+.integration { margin-bottom: 30px; }
+.integration-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 10px; }
+.integration-heading h2 { margin: 2px 0 0; font-size: 21px; }
+.section-kicker { color: var(--muted); font: 600 11px ui-monospace, monospace; text-transform: uppercase; letter-spacing: .06em; }
+.cloud-badge { padding: 4px 8px; border: 1px solid #275c3b; border-radius: 999px; color: var(--green); font-size: 11px; }
 .panel { border: 1px solid var(--line); border-radius: 14px; background: var(--card); padding: 20px; }
 .step { display: grid; grid-template-columns: 36px 1fr; gap: 14px; }
 .step-number { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--card2); color: var(--orange); font-weight: 700; }
@@ -45,6 +50,16 @@ code { color: var(--orange); background: var(--card2); border-radius: 4px; paddi
 .connected-user { color: var(--green); font-size: 12px; margin-bottom: 14px; }
 label { display: grid; gap: 7px; margin: 18px 0; color: var(--muted); font-size: 12px; }
 select { width: 100%; color: var(--ink); background: var(--card2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+select:focus { outline: 2px solid color-mix(in srgb, var(--orange) 45%, transparent); outline-offset: 1px; }
+.form-copy { margin-bottom: 2px; }
+.notice { margin: 12px 0; padding: 10px; border-radius: 8px; color: var(--green); background: #14251a; font-size: 12px; line-height: 1.5; }
+.github-login { min-width: 190px; }
+.callback-box { display: grid; grid-template-columns: 1fr auto; gap: 7px 10px; align-items: center; margin-top: 18px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #141517; }
+.callback-box span { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+.callback-box code { min-width: 0; overflow-wrap: anywhere; }
+button.compact { padding: 6px 9px; font-size: 12px; }
+.status-line.syncing { color: var(--orange); }
+.status-line.syncing .status-dot { background: var(--orange); }
 .status-line { color: var(--green); font-size: 12px; font-weight: 650; margin-bottom: 12px; }
 .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 5px; }
 .status-line.paused { color: var(--orange); }
@@ -60,4 +75,5 @@ aside { margin: 18px 4px; color: var(--muted); font-size: 12px; line-height: 1.5
   main { margin: 28px auto; }
   dl div { grid-template-columns: 1fr; gap: 3px; }
   button.danger { margin-left: 0; }
+  .callback-box { grid-template-columns: 1fr; }
 }

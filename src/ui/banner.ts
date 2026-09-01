@@ -1,14 +1,13 @@
-// Bandeau leetcode.com (§9.3) — Shadow DOM, fine bande orange translucide
-// injectée en haut de page quand des révisions sont dues.
+// Bandeau commun LeetCode / NeetCode, injecté quand des révisions sont dues.
 
 export interface BannerInfo {
   count: number;
-  next: { slug: string; frontendId: string; title: string };
+  next: { id: string; title: string };
 }
 
 export interface BannerCallbacks {
   /** « Ouvrir » — navigue vers le dû le plus ancien. */
-  onOpen(slug: string): void;
+  onOpen(problemId: string): void;
   /** « Plus tard » ou « × » — snooze jusqu'au prochain minuit local. */
   onSnooze(): void;
 }
@@ -56,11 +55,11 @@ button:hover { background: rgba(255, 161, 22, .15); }
 let host: HTMLDivElement | null = null;
 let txtEl: HTMLElement | null = null;
 let callbacks: BannerCallbacks | null = null;
-let currentSlug = "";
+let currentProblemId = "";
 
 export function renderBanner(info: BannerInfo, cb: BannerCallbacks): void {
   callbacks = cb;
-  currentSlug = info.next.slug;
+  currentProblemId = info.next.id;
 
   if (host === null) {
     host = document.createElement("div");
@@ -83,7 +82,7 @@ export function renderBanner(info: BannerInfo, cb: BannerCallbacks): void {
 
     txtEl = banner.querySelector<HTMLElement>(".txt");
     banner.querySelector(".open")?.addEventListener("click", () => {
-      callbacks?.onOpen(currentSlug);
+      callbacks?.onOpen(currentProblemId);
     });
     const snooze = (): void => callbacks?.onSnooze();
     banner.querySelector(".later")?.addEventListener("click", snooze);
@@ -98,7 +97,7 @@ export function renderBanner(info: BannerInfo, cb: BannerCallbacks): void {
       `↻ ${info.count} révision${info.count > 1 ? "s" : ""} due${info.count > 1 ? "s" : ""} · prochaine : `,
     );
     const b = document.createElement("b");
-    b.textContent = `${info.next.frontendId}. ${info.next.title}`;
+    b.textContent = info.next.title;
     txtEl.appendChild(b);
   }
 }

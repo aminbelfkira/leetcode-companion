@@ -4,20 +4,39 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="manifest.open-in-tab" content="true" />
-    <title>LeetCode Companion · GitHub Sync</title>
+    <title>Companion · Synchronisations</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
     <main>
       <header>
-        <div class="eyebrow">LeetCode Companion</div>
-        <h1>GitHub Sync</h1>
-        <p>Une activation, puis chaque nouvelle solution Accepted est synchronisée automatiquement.</p>
+        <div class="eyebrow">Companion</div>
+        <h1>Synchronisations</h1>
+        <p>Sauvegarde ton planning de révision dans Supabase et tes solutions LeetCode dans GitHub.</p>
       </header>
-      <section id="app" aria-live="polite"></section>
+      <section class="integration" aria-labelledby="supabase-title">
+        <div class="integration-heading">
+          <div>
+            <div class="section-kicker">Données de révision</div>
+            <h2 id="supabase-title">Supabase</h2>
+          </div>
+          <span class="cloud-badge">Local-first</span>
+        </div>
+        <div id="cloud-app" aria-live="polite"></div>
+      </section>
+      <section class="integration" aria-labelledby="github-title">
+        <div class="integration-heading">
+          <div>
+            <div class="section-kicker">Code LeetCode</div>
+            <h2 id="github-title">GitHub Sync</h2>
+          </div>
+        </div>
+        <div id="app" aria-live="polite"></div>
+      </section>
       <aside>
-        Le code est demandé à LeetCode uniquement après un Accepted et seulement lorsque GitHub
-        Sync est actif. Aucun token ni code n'est envoyé à un serveur LeetCode Companion.
+        Le snapshot Supabase reçoit uniquement les cartes, le journal et les réglages FSRS. Les
+        tokens de la GitHub App, le code des solutions et la file de commits n'y sont jamais inclus.
+        Le code NeetCode n'est jamais collecté.
       </aside>
     </main>
     <script type="module" src="./main.ts"></script>

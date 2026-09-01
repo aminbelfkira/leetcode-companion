@@ -1,5 +1,5 @@
-// Panneau de notation injecté (§9.1) — Shadow DOM, styles auto-contenus,
-// aucune fuite CSS vers/depuis LeetCode.
+// Panneau de notation commun LeetCode / NeetCode — Shadow DOM et styles
+// auto-contenus, sans fuite CSS vers ou depuis le site hôte.
 
 import { formatDueRelative } from "../fsrs";
 import type { Feel } from "../types";
@@ -7,9 +7,9 @@ import type { Feel } from "../types";
 export type PanelMode = "seul" | "aide";
 
 export interface PanelData {
-  frontendId: string;
   title: string;
-  lcDifficulty: string;
+  difficulty: string;
+  platform: "LeetCode" | "NeetCode";
   submissionsInSession: number;
   minutesInSession: number | null;
 }
@@ -30,7 +30,7 @@ const STYLE = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
 .panel {
   --bg:#0f1011; --card:#1a1b1d; --card2:#242528; --line:#2f3134;
-  --ink:#eff1f3; --mut:#8f959c; --lc:#ffa116; --ok:#2cbb5d; --due:#ff5c5c;
+  --ink:#eff1f3; --mut:#8f959c; --accent:#ffa116; --ok:#2cbb5d; --due:#ff5c5c;
   position: fixed; right: 16px; bottom: 16px; width: 308px;
   z-index: 2147483647;
   background: var(--card); color: var(--ink);
@@ -66,7 +66,7 @@ const STYLE = `
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 .chip.easy { color: var(--ok); }
-.chip.medium { color: var(--lc); }
+.chip.medium { color: #ffc01e; }
 .chip.hard { color: var(--due); }
 .q { color: var(--mut); font-size: 11px; margin: 12px 0 6px; }
 .row { display: flex; gap: 6px; }
@@ -76,14 +76,14 @@ const STYLE = `
   font-size: 12px; cursor: pointer; text-align: center;
 }
 .opt:hover { border-color: var(--mut); }
-.opt.sel { border-color: var(--lc); color: var(--lc); }
+.opt.sel { border-color: var(--accent); color: var(--accent); }
 .opt small { display: block; color: var(--mut); font-size: 10px; }
-.opt.sel small { color: var(--lc); }
+.opt.sel small { color: var(--accent); }
 .next { margin-top: 12px; font-size: 12px; color: var(--mut); min-height: 16px; }
 .next b { color: var(--ink); font-weight: 600; }
 .save {
   width: 100%; margin-top: 10px; padding: 8px;
-  background: var(--lc); border: none; border-radius: 8px;
+  background: var(--accent); border: none; border-radius: 8px;
   color: #1a1305; font-weight: 650; font-size: 13px; cursor: pointer;
 }
 .save:disabled { opacity: .4; cursor: default; }
@@ -111,20 +111,21 @@ export function mountPanel(data: PanelData, cb: PanelCallbacks): void {
 
   const panel = document.createElement("div");
   panel.className = "panel";
+  panel.style.setProperty("--accent", data.platform === "NeetCode" ? "#48c78e" : "#ffa116");
   shadow.appendChild(panel);
 
-  const diffClass = data.lcDifficulty.toLowerCase();
+  const diffClass = data.difficulty.toLowerCase();
   const minutesChip =
     data.minutesInSession === null
       ? ""
       : `<span class="chip">≈ ${data.minutesInSession} min</span>`;
 
   panel.innerHTML = `
-    <div class="tag">✓ Accepted · détecté</div>
+    <div class="tag">✓ Accepted · ${data.platform}</div>
     <button class="close" title="Fermer">×</button>
     <div class="title"></div>
     <div class="chips">
-      <span class="chip ${diffClass}">${escapeHtml(data.lcDifficulty)}</span>
+      <span class="chip ${diffClass}">${escapeHtml(data.difficulty)}</span>
       <span class="chip">${data.submissionsInSession} soumission${data.submissionsInSession > 1 ? "s" : ""}</span>
       ${minutesChip}
     </div>
@@ -145,7 +146,7 @@ export function mountPanel(data: PanelData, cb: PanelCallbacks): void {
     <div class="hint">Intervalle indicatif</div>
   `;
   const titleEl = panel.querySelector<HTMLDivElement>(".title");
-  if (titleEl) titleEl.textContent = `${data.frontendId}. ${data.title}`;
+  if (titleEl) titleEl.textContent = data.title;
 
   let mode: PanelMode | null = null;
   let feel: Feel | null = null;

@@ -1,23 +1,21 @@
-// Monde ISOLATED LeetCode : session, Accepted, métadonnées, révisions et
-// GitHub Sync. La synchronisation reste indépendante du cooldown FSRS.
+// Monde ISOLATED NeetCode : consomme les événements du script MAIN, gère les
+// sessions et affiche la même expérience FSRS que sur LeetCode.
 
 import { LOG_PREFIX, PAGE_MSG_SOURCE, SESSION_MAX_AGE_H } from "../src/config";
-import { githubFileUrl } from "../src/github/links";
-import { fetchAcceptedSubmissionForSync, resolveMeta } from "../src/lc-graphql";
 import {
-  collectionSlugFromSearch,
   isAcceptedVerdict,
+  listSlugFromSearch,
   problemSlugFromPathname,
-} from "../src/lc-endpoints";
+  submissionIndexFromSearch,
+} from "../src/nc-endpoints";
+import { resolveMeta } from "../src/nc-meta";
 import { sendToBackground } from "../src/messaging";
 import { findExistingProblemId, problemUrl } from "../src/problem-identity";
 import { dueCards } from "../src/review";
 import { getCards, getSettings } from "../src/storage";
 import { removeBanner, renderBanner } from "../src/ui/banner";
-import { showGithubSyncToast } from "../src/ui/github-sync-toast";
 import { isPanelMounted, mountPanel } from "../src/ui/panel";
-import { resetEditorForCompanionReview } from "../src/ui/review-reset";
-import type { PageMessage, ProblemDescriptor } from "../src/types";
+import type { NcPageMessage, ProblemDescriptor } from "../src/types";
 
 interface ProblemSession {
   slug: string;
@@ -26,30 +24,35 @@ interface ProblemSession {
 }
 
 interface SubmissionContext {
+  token: string;
   slug: string;
-  collectionSlug: string | null;
+  listSlug: string | null;
   submissionsInSession: number;
   sessionStartedAt: number;
+  initialSubmissionIndex: string | null;
+  acceptedInitiallyVisible: boolean;
+  expiresAt: number;
+  timer: number | null;
 }
 
 interface AcceptedSnapshot {
   slug: string;
-  collectionSlug: string | null;
+  listSlug: string | null;
   submissionsInSession: number;
   minutesInSession: number;
 }
 
 const MAX_SUBMISSION_CONTEXTS = 128;
+const FALLBACK_TTL_MS = 30_000;
 
 export default defineContentScript({
-  matches: ["https://leetcode.com/*"],
+  matches: ["https://neetcode.io/*"],
   runAt: "document_start",
   main() {
-    resetEditorForCompanionReview();
     const storageReady = sendToBackground({ kind: "STORAGE_READY" });
-
     let session: ProblemSession | null = null;
     const submissionContexts = new Map<string, SubmissionContext>();
+    const handledAcceptedTokens = new Set<string>();
     const metaRepairTried = new Set<string>();
 
     function ensureSession(slug: string): ProblemSession {
@@ -58,39 +61,94 @@ export default defineContentScript({
         session !== null && now - session.startedAt > SESSION_MAX_AGE_H * 3_600_000;
       if (session === null || session.slug !== slug || stale) {
         session = { slug, startedAt: now, submitCount: 0 };
-        console.log(`${LOG_PREFIX} nouvelle session LeetCode`, { slug, stale });
+        console.log(`${LOG_PREFIX} nouvelle session NeetCode`, { slug, stale });
         void maybeRepairMeta(slug).catch((error: unknown) =>
-          console.warn(`${LOG_PREFIX} repairMeta LeetCode`, error),
+          console.warn(`${LOG_PREFIX} repairMeta NeetCode`, error),
         );
       }
       return session;
     }
 
-    function rememberSubmission(id: string, current: ProblemSession): void {
-      submissionContexts.set(id, {
-        slug: current.slug,
-        collectionSlug: collectionSlugFromSearch(location.search),
-        submissionsInSession: current.submitCount,
-        sessionStartedAt: current.startedAt,
-      });
+    function acceptedResultVisible(): boolean {
+      return [...document.querySelectorAll<HTMLElement>(".submission-result-accepted")].some(
+        (element) =>
+          element.getClientRects().length > 0 &&
+          isAcceptedVerdict(element.textContent),
+      );
+    }
+
+    function pruneContexts(): void {
       while (submissionContexts.size > MAX_SUBMISSION_CONTEXTS) {
-        const oldestId = submissionContexts.keys().next().value;
-        if (oldestId === undefined) break;
-        submissionContexts.delete(oldestId);
+        const oldestToken = submissionContexts.keys().next().value;
+        if (oldestToken === undefined) break;
+        cancelFallback(oldestToken, true);
+      }
+      while (handledAcceptedTokens.size > MAX_SUBMISSION_CONTEXTS) {
+        const oldestToken = handledAcceptedTokens.values().next().value;
+        if (oldestToken === undefined) break;
+        handledAcceptedTokens.delete(oldestToken);
       }
     }
 
-    function takeSubmission(id: string): SubmissionContext | null {
-      const remembered = submissionContexts.get(id) ?? null;
-      submissionContexts.delete(id);
-      if (remembered !== null) return remembered;
-      if (session === null) return null;
+    function cancelFallback(token: string, removeContext = false): void {
+      const context = submissionContexts.get(token);
+      if (context?.timer !== null && context?.timer !== undefined) {
+        window.clearTimeout(context.timer);
+        context.timer = null;
+      }
+      if (removeContext) submissionContexts.delete(token);
+    }
+
+    function snapshotFrom(context: SubmissionContext): AcceptedSnapshot {
       return {
-        slug: session.slug,
-        collectionSlug: collectionSlugFromSearch(location.search),
-        submissionsInSession: session.submitCount,
-        sessionStartedAt: session.startedAt,
+        slug: context.slug,
+        listSlug: context.listSlug,
+        submissionsInSession: context.submissionsInSession,
+        minutesInSession: Math.round((Date.now() - context.sessionStartedAt) / 60_000),
       };
+    }
+
+    function handleAcceptedOnce(
+      token: string,
+      snapshot: AcceptedSnapshot,
+      source: "network" | "dom",
+    ): void {
+      if (handledAcceptedTokens.has(token)) return;
+      handledAcceptedTokens.add(token);
+      cancelFallback(token, true);
+      pruneContexts();
+      console.log(`${LOG_PREFIX} ✓ Accepted NeetCode détecté`, { ...snapshot, source });
+      void handleAccepted(snapshot).catch((error: unknown) =>
+        console.warn(`${LOG_PREFIX} handleAccepted NeetCode`, error),
+      );
+    }
+
+    /**
+     * NeetCode affiche parfois le verdict puis navigue vers history. Ce repli
+     * ne s'arme qu'après un vrai Submit et ne traite jamais un ancien historique.
+     */
+    function armDomAcceptedFallback(context: SubmissionContext): void {
+      function poll(): void {
+        if (submissionContexts.get(context.token) !== context) return;
+        const currentIndex = submissionIndexFromSearch(location.search);
+        const submissionChanged =
+          currentIndex !== null && currentIndex !== context.initialSubmissionIndex;
+        const acceptedNow = acceptedResultVisible();
+        if (
+          problemSlugFromPathname(location.pathname) === context.slug &&
+          acceptedNow &&
+          (submissionChanged || !context.acceptedInitiallyVisible)
+        ) {
+          handleAcceptedOnce(context.token, snapshotFrom(context), "dom");
+          return;
+        }
+        if (Date.now() >= context.expiresAt) {
+          cancelFallback(context.token, true);
+          return;
+        }
+        context.timer = window.setTimeout(poll, 300);
+      }
+      context.timer = window.setTimeout(poll, 300);
     }
 
     async function maybeRepairMeta(slug: string): Promise<void> {
@@ -99,12 +157,12 @@ export default defineContentScript({
       await storageReady;
       const cards = await getCards();
       const partial: ProblemDescriptor = {
-        platform: "leetcode",
+        platform: "neetcode",
         slug,
         title: slug,
         difficulty: "Unknown",
         frontendId: null,
-        listSlug: collectionSlugFromSearch(location.search),
+        listSlug: listSlugFromSearch(location.search),
         metaIncomplete: true,
       };
       const problemId = findExistingProblemId(cards, partial);
@@ -116,35 +174,47 @@ export default defineContentScript({
         problem: {
           ...partial,
           title: meta.title,
-          difficulty: meta.lcDifficulty,
-          frontendId: meta.frontendId,
+          difficulty: meta.difficulty,
           metaIncomplete: false,
         },
       });
-      console.log(`${LOG_PREFIX} métadonnées LeetCode réparées`, slug);
+      console.log(`${LOG_PREFIX} métadonnées NeetCode réparées`, slug);
     }
 
     function isRecord(value: unknown): value is Record<string, unknown> {
       return typeof value === "object" && value !== null;
     }
 
-    function isPageMessage(value: unknown): value is PageMessage {
+    function isNullableString(value: unknown): value is string | null {
+      return value === null || typeof value === "string";
+    }
+
+    function isNullableNumber(value: unknown): value is number | null {
+      return value === null || typeof value === "number";
+    }
+
+    function isPageMessage(value: unknown): value is NcPageMessage {
       if (!isRecord(value) || value.source !== PAGE_MSG_SOURCE || !isRecord(value.payload)) {
         return false;
       }
       switch (value.type) {
         case "url-change":
-          return typeof value.payload.pathname === "string";
+          return (
+            typeof value.payload.pathname === "string" &&
+            typeof value.payload.search === "string"
+          );
         case "submission-created":
           return (
-            typeof value.payload.id === "string" &&
-            typeof value.payload.slug === "string"
+            typeof value.payload.token === "string" &&
+            isNullableString(value.payload.slug)
           );
         case "submission-result":
           return (
-            typeof value.payload.id === "string" &&
-            typeof value.payload.statusMsg === "string" &&
-            typeof value.payload.statusCode === "number"
+            typeof value.payload.token === "string" &&
+            isNullableString(value.payload.slug) &&
+            typeof value.payload.statusDescription === "string" &&
+            isNullableNumber(value.payload.testCaseCount) &&
+            isNullableNumber(value.payload.correctTestCaseCount)
           );
         default:
           return false;
@@ -162,86 +232,47 @@ export default defineContentScript({
             break;
           }
           case "submission-created": {
-            const current = ensureSession(message.payload.slug);
+            const slug = message.payload.slug ?? problemSlugFromPathname(location.pathname);
+            if (slug === null || submissionContexts.has(message.payload.token)) break;
+            const current = ensureSession(slug);
             current.submitCount += 1;
-            rememberSubmission(message.payload.id, current);
-            console.log(`${LOG_PREFIX} soumission LeetCode créée`, {
-              id: message.payload.id,
-              slug: current.slug,
-              submitCount: current.submitCount,
+            const context: SubmissionContext = {
+              token: message.payload.token,
+              slug,
+              listSlug: listSlugFromSearch(location.search),
+              submissionsInSession: current.submitCount,
+              sessionStartedAt: current.startedAt,
+              initialSubmissionIndex: submissionIndexFromSearch(location.search),
+              acceptedInitiallyVisible: acceptedResultVisible(),
+              expiresAt: Date.now() + FALLBACK_TTL_MS,
+              timer: null,
+            };
+            submissionContexts.set(context.token, context);
+            pruneContexts();
+            armDomAcceptedFallback(context);
+            console.log(`${LOG_PREFIX} soumission NeetCode créée`, {
+              token: context.token,
+              slug: context.slug,
+              submitCount: context.submissionsInSession,
             });
             break;
           }
           case "submission-result": {
-            const { id, statusMsg, statusCode } = message.payload;
-            const context = takeSubmission(id);
-            console.log(`${LOG_PREFIX} résultat LeetCode`, { id, statusMsg, statusCode });
-            if (!isAcceptedVerdict(statusMsg, statusCode) || context === null) break;
-            const snapshot: AcceptedSnapshot = {
-              slug: context.slug,
-              collectionSlug: context.collectionSlug,
-              submissionsInSession: context.submissionsInSession,
-              minutesInSession: Math.round(
-                (Date.now() - context.sessionStartedAt) / 60_000,
-              ),
-            };
-            void syncAcceptedToGithub(id, snapshot.slug, snapshot.collectionSlug).catch(
-              (error: unknown) => console.warn(`${LOG_PREFIX} GitHub sync`, error),
-            );
-            void handleAccepted(snapshot).catch((error: unknown) =>
-              console.warn(`${LOG_PREFIX} handleAccepted LeetCode`, error),
-            );
+            const { token, statusDescription } = message.payload;
+            const context = submissionContexts.get(token);
+            if (context === undefined) break;
+            cancelFallback(token);
+            console.log(`${LOG_PREFIX} résultat NeetCode`, { token, statusDescription });
+            if (isAcceptedVerdict(statusDescription)) {
+              handleAcceptedOnce(token, snapshotFrom(context), "network");
+            } else {
+              submissionContexts.delete(token);
+            }
             break;
           }
         }
       } catch (error) {
-        console.warn(`${LOG_PREFIX} message LeetCode`, error);
-      }
-    }
-
-    async function syncAcceptedToGithub(
-      submissionId: string,
-      slug: string,
-      collectionSlug: string | null,
-    ): Promise<void> {
-      const status = await sendToBackground({ kind: "GITHUB_GET_STATUS" });
-      if (!status.enabled) return;
-
-      let submission = null;
-      for (const delayMs of [0, 500, 1_500]) {
-        if (delayMs > 0) {
-          await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
-        }
-        submission = await fetchAcceptedSubmissionForSync(
-          submissionId,
-          slug,
-          collectionSlug,
-        );
-        if (submission !== null) break;
-      }
-      if (submission === null) {
-        throw new Error("Le détail de la soumission Accepted est indisponible");
-      }
-
-      const result = await sendToBackground({ kind: "GITHUB_SYNC_SUBMISSION", submission });
-      console.log(
-        `${LOG_PREFIX} GitHub ${result.synced ? "synchronisé" : "mis en attente"}`,
-        result.path === null ? { pendingCount: result.pendingCount } : { path: result.path },
-      );
-      if (result.synced && result.path !== null && status.repository !== null) {
-        const repository = status.repository;
-        showGithubSyncToast(
-          { repository: repository.fullName, path: result.path },
-          {
-            onOpen: () => {
-              window.open(
-                githubFileUrl(repository, result.path!),
-                "_blank",
-                "noopener,noreferrer",
-              );
-            },
-          },
-        );
+        console.warn(`${LOG_PREFIX} message NeetCode`, error);
       }
     }
 
@@ -250,12 +281,12 @@ export default defineContentScript({
 
       const meta = await resolveMeta(snapshot.slug);
       const problem: ProblemDescriptor = {
-        platform: "leetcode",
+        platform: "neetcode",
         slug: snapshot.slug,
         title: meta.title,
-        difficulty: meta.lcDifficulty,
-        frontendId: meta.frontendId,
-        listSlug: snapshot.collectionSlug,
+        difficulty: meta.difficulty,
+        frontendId: null,
+        listSlug: snapshot.listSlug,
         metaIncomplete: meta.metaIncomplete,
       };
       const { problemId, underCooldown } = await sendToBackground({
@@ -263,7 +294,7 @@ export default defineContentScript({
         problem,
       });
       if (underCooldown) {
-        console.log(`${LOG_PREFIX} Accepted LeetCode ignoré (cooldown)`, snapshot.slug);
+        console.log(`${LOG_PREFIX} Accepted NeetCode ignoré (cooldown)`, snapshot.slug);
         return;
       }
 
@@ -272,7 +303,7 @@ export default defineContentScript({
         {
           title: problem.title,
           difficulty: problem.difficulty,
-          platform: "LeetCode",
+          platform: "NeetCode",
           submissionsInSession: snapshot.submissionsInSession,
           minutesInSession: snapshot.minutesInSession,
         },
@@ -301,7 +332,7 @@ export default defineContentScript({
               });
               return scheduledDue;
             } catch (error) {
-              console.warn(`${LOG_PREFIX} LOG_REVIEW LeetCode`, error);
+              console.warn(`${LOG_PREFIX} LOG_REVIEW NeetCode`, error);
               return null;
             }
           },
@@ -316,7 +347,7 @@ export default defineContentScript({
                 acceptedAt,
               },
             }).catch((error: unknown) =>
-              console.warn(`${LOG_PREFIX} pendingAccepted LeetCode`, error),
+              console.warn(`${LOG_PREFIX} pendingAccepted NeetCode`, error),
             );
           },
         },
@@ -342,7 +373,7 @@ export default defineContentScript({
           {
             onOpen: (problemId) => {
               const card = cards[problemId];
-              if (card !== undefined) location.assign(problemUrl(card, "leetcode"));
+              if (card !== undefined) location.assign(problemUrl(card, "neetcode"));
             },
             onSnooze: () => {
               void sendToBackground({ kind: "SNOOZE_BANNER" }).catch(
@@ -352,7 +383,7 @@ export default defineContentScript({
           },
         );
       } catch (error) {
-        console.warn(`${LOG_PREFIX} bandeau LeetCode`, error);
+        console.warn(`${LOG_PREFIX} bandeau NeetCode`, error);
       }
     }
 
@@ -365,6 +396,6 @@ export default defineContentScript({
     window.addEventListener("message", onMessage);
     const initialSlug = problemSlugFromPathname(location.pathname);
     if (initialSlug !== null) ensureSession(initialSlug);
-    console.log(`${LOG_PREFIX} content LeetCode actif`);
+    console.log(`${LOG_PREFIX} content NeetCode actif`);
   },
 });

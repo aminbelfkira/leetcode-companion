@@ -19,7 +19,7 @@ import {
 import type { PageEventPayloads, PageEventType } from "../src/types";
 
 export default defineContentScript({
-  matches: ["*://leetcode.com/*"],
+  matches: ["https://leetcode.com/*"],
   runAt: "document_start",
   world: "MAIN",
   main() {

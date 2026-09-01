@@ -1,18 +1,22 @@
 {
   "name": "leetcode-companion",
-  "description": "LeetCode Companion — révision FSRS et GitHub Sync optionnelle",
+  "description": "Companion — révision FSRS LeetCode/NeetCode, sync Supabase et GitHub Sync LeetCode",
   "private": true,
   "version": "0.2.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "wxt",
     "build": "wxt build",
     "zip": "wxt zip",
     "compile": "tsc --noEmit",
-    "test": "vite-node tests/github-sync.test.ts && vite-node tests/review-reset.test.ts",
+    "test": "vite-node tests/github-sync.test.ts && vite-node tests/review-reset.test.ts && vite-node tests/nc-endpoints.test.ts && vite-node tests/problem-identity.test.ts && vite-node tests/supabase-oauth.test.ts && vite-node --config vite.tests.config.ts tests/review-storage.test.ts && vite-node --config vite.tests.config.ts tests/supabase-sync.test.ts",
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
     "ts-fsrs": "^5.2.1"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
-// Modèle de données (§6) + protocole d'événements page (§5.4).
+// Modèle de données commun à LeetCode et NeetCode, protocole runtime et
+// événements relayés depuis le monde MAIN.
 
 import type {
   AcceptedSubmissionForSync,
@@ -8,87 +9,119 @@ import type {
   GithubSyncStatus,
 } from "./github/types";
 
+export type Platform = "leetcode" | "neetcode";
 export type Mode = "seul" | "aide" | "abandon";
-export type Feel = 1 | 2 | 3 | 4; // 1 fluide · 2 correct · 3 laborieux · 4 à l'arraché
+export type Feel = 1 | 2 | 3 | 4;
+export type Difficulty = "Easy" | "Medium" | "Hard" | "Unknown";
 
 export interface FsrsState {
-  due: string; // ISO
+  due: string;
   stability: number;
   difficulty: number;
   reps: number;
   lapses: number;
-  state: number; // enum State de ts-fsrs
-  last_review: string | null; // ISO
+  state: number;
+  last_review: string | null;
 }
 
+/** Métadonnées observées sur l'un des deux sites. */
+export interface ProblemDescriptor {
+  platform: Platform;
+  slug: string;
+  title: string;
+  difficulty: Difficulty;
+  frontendId: string | null;
+  listSlug: string | null;
+  metaIncomplete: boolean;
+}
+
+export interface ProblemSource {
+  slug: string;
+  frontendId: string | null;
+  listSlug: string | null;
+  difficulty: Difficulty;
+  lastSeenAt: string;
+}
+
+/** Une seule carte de révision, éventuellement reliée aux deux plateformes. */
 export interface ProblemCard {
-  slug: string; // "two-sum" — clé primaire
-  frontendId: string; // "1"
-  title: string; // "Two Sum"
-  lcDifficulty: "Easy" | "Medium" | "Hard" | "Unknown";
-  metaIncomplete?: boolean; // fallback §5.2 utilisé
+  id: string;
+  title: string;
+  difficulty: Difficulty;
+  sources: Partial<Record<Platform, ProblemSource>>;
+  metaIncomplete?: boolean;
   lastMode: Mode;
-  lastFeel: Feel | null; // null si mode = "abandon"
+  lastFeel: Feel | null;
   fsrs: FsrsState;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface ReviewLogEntry {
-  // append-only, source de vérité
   ts: string;
-  slug: string;
+  problemId: string;
+  platform: Platform;
   mode: Mode;
   feel: Feel | null;
-  grade: 1 | 2 | 3 | 4; // Rating FSRS réellement appliqué
+  grade: 1 | 2 | 3 | 4;
   submissionsInSession: number;
   minutesInSession: number | null;
-  scheduledDue: string; // due résultant
+  scheduledDue: string;
 }
 
 export interface Settings {
-  reviewCooldownHours: number; // défaut 8
-  requestRetention: number; // défaut 0.9
-  maximumIntervalDays: number; // défaut 180
-  arracheCountsAsAgain: boolean; // défaut false (§7)
+  reviewCooldownHours: number;
+  requestRetention: number;
+  maximumIntervalDays: number;
+  arracheCountsAsAgain: boolean;
   bannerSnoozedUntil: string | null;
 }
 
 export interface PendingAccepted {
-  // Accepted détecté mais panneau fermé sans noter
-  slug: string;
-  frontendId: string;
-  title: string;
-  lcDifficulty: ProblemCard["lcDifficulty"];
+  problemId: string;
+  problem: ProblemDescriptor;
   submissionsInSession: number;
   minutesInSession: number | null;
   acceptedAt: string;
 }
 
-// ---------------------------------------------------------------------------
-// Messages runtime → background (single-writer, §3/§4)
-// ---------------------------------------------------------------------------
-
-/** Payload d'une review saisie (panneau, popup pendingAccepted, abandon). */
 export interface ReviewInput {
-  slug: string;
-  frontendId: string;
-  title: string;
-  lcDifficulty: ProblemCard["lcDifficulty"];
-  metaIncomplete: boolean;
+  problemId: string;
+  problem: ProblemDescriptor;
   mode: Mode;
   feel: Feel | null;
   submissionsInSession: number;
   minutesInSession: number | null;
 }
 
+export interface SupabaseSyncStatus {
+  available: boolean;
+  connected: boolean;
+  email: string | null;
+  userLogin: string | null;
+  redirectUrl: string | null;
+  dirty: boolean;
+  lastSyncAt: string | null;
+  lastError: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Messages runtime → background (single-writer)
+// ---------------------------------------------------------------------------
+
 export type RuntimeRequest =
-  | { kind: "CHECK_COOLDOWN"; slug: string }
-  | { kind: "PREVIEW_REVIEW"; slug: string; mode: Mode; feel: Feel | null }
+  | { kind: "STORAGE_READY" }
+  | { kind: "PREPARE_ACCEPTED"; problem: ProblemDescriptor }
+  | { kind: "CHECK_COOLDOWN"; problemId: string }
+  | { kind: "PREVIEW_REVIEW"; problemId: string; mode: Mode; feel: Feel | null }
   | { kind: "LOG_REVIEW"; review: ReviewInput }
   | { kind: "SET_PENDING_ACCEPTED"; pending: PendingAccepted }
   | { kind: "CLEAR_PENDING_ACCEPTED" }
   | { kind: "SNOOZE_BANNER" }
+  | { kind: "SUPABASE_GET_STATUS" }
+  | { kind: "SUPABASE_SIGN_IN_GITHUB" }
+  | { kind: "SUPABASE_SIGN_OUT" }
+  | { kind: "SUPABASE_SYNC_NOW" }
   | { kind: "GITHUB_GET_STATUS" }
   | { kind: "GITHUB_START_DEVICE_FLOW" }
   | { kind: "GITHUB_POLL_DEVICE_FLOW" }
@@ -97,15 +130,11 @@ export type RuntimeRequest =
   | { kind: "GITHUB_DISCONNECT" }
   | { kind: "GITHUB_RETRY_QUEUE" }
   | { kind: "GITHUB_SYNC_SUBMISSION"; submission: AcceptedSubmissionForSync }
-  | {
-      kind: "UPDATE_CARD_META"; // §10 — répare une carte metaIncomplete
-      slug: string;
-      frontendId: string;
-      title: string;
-      lcDifficulty: ProblemCard["lcDifficulty"];
-    };
+  | { kind: "UPDATE_CARD_META"; problem: ProblemDescriptor };
 
 export interface RuntimeResponseMap {
+  STORAGE_READY: { ok: true };
+  PREPARE_ACCEPTED: { problemId: string; underCooldown: boolean };
   CHECK_COOLDOWN: { underCooldown: boolean };
   PREVIEW_REVIEW: { scheduledDue: string };
   LOG_REVIEW: { scheduledDue: string };
@@ -113,6 +142,10 @@ export interface RuntimeResponseMap {
   CLEAR_PENDING_ACCEPTED: { ok: true };
   SNOOZE_BANNER: { ok: true };
   UPDATE_CARD_META: { ok: true };
+  SUPABASE_GET_STATUS: SupabaseSyncStatus;
+  SUPABASE_SIGN_IN_GITHUB: SupabaseSyncStatus;
+  SUPABASE_SIGN_OUT: SupabaseSyncStatus;
+  SUPABASE_SYNC_NOW: SupabaseSyncStatus;
   GITHUB_GET_STATUS: GithubSyncStatus;
   GITHUB_START_DEVICE_FLOW: GithubDeviceFlowStart;
   GITHUB_POLL_DEVICE_FLOW: GithubDeviceFlowPoll;
@@ -132,7 +165,7 @@ export type RuntimeResponse<K extends RuntimeRequest["kind"]> =
   | { error: string };
 
 // ---------------------------------------------------------------------------
-// Événements MAIN → ISOLATED (§5.4)
+// Événements MAIN → ISOLATED LeetCode
 // ---------------------------------------------------------------------------
 
 export interface PageEventPayloads {
@@ -151,3 +184,29 @@ export type PageMessage = {
     payload: PageEventPayloads[T];
   };
 }[PageEventType];
+
+// ---------------------------------------------------------------------------
+// Événements MAIN → ISOLATED NeetCode
+// ---------------------------------------------------------------------------
+
+export interface NcPageEventPayloads {
+  "submission-created": { token: string; slug: string | null };
+  "submission-result": {
+    token: string;
+    slug: string | null;
+    statusDescription: string;
+    testCaseCount: number | null;
+    correctTestCaseCount: number | null;
+  };
+  "url-change": { pathname: string; search: string };
+}
+
+export type NcPageEventType = keyof NcPageEventPayloads;
+
+export type NcPageMessage = {
+  [T in NcPageEventType]: {
+    source: "lcfsrs";
+    type: T;
+    payload: NcPageEventPayloads[T];
+  };
+}[NcPageEventType];

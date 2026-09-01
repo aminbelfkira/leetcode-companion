@@ -6,13 +6,26 @@ import { LOG_PREFIX } from "../../src/config";
 import { formatDueRelative } from "../../src/fsrs";
 import {
   LC_ORIGIN,
-  problemSlugFromPathname,
-  reviewProblemUrl,
+  problemSlugFromPathname as lcProblemSlug,
 } from "../../src/lc-endpoints";
 import { sendToBackground } from "../../src/messaging";
+import {
+  NC_ORIGIN,
+  problemSlugFromPathname as ncProblemSlug,
+} from "../../src/nc-endpoints";
+import { problemUrl } from "../../src/problem-identity";
+import { dueCards } from "../../src/review";
 import { getAllData } from "../../src/storage";
 import type { GithubSyncStatus } from "../../src/github/types";
-import type { Feel, Mode, PendingAccepted, ProblemCard, ReviewInput } from "../../src/types";
+import type {
+  Feel,
+  Mode,
+  PendingAccepted,
+  Platform,
+  ProblemCard,
+  ProblemDescriptor,
+  ReviewInput,
+} from "../../src/types";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -49,11 +62,18 @@ function modeLabel(mode: Mode): string {
   }
 }
 
+function platformsLabel(card: ProblemCard): string {
+  return Object.keys(card.sources)
+    .map((platform) => (platform === "leetcode" ? "LeetCode" : "NeetCode"))
+    .join(" + ");
+}
+
 function cardMetaHtml(card: ProblemCard): string {
-  const difficulty = card.lcDifficulty.toLowerCase();
+  const difficulty = card.difficulty.toLowerCase();
   const feel = card.lastFeel === null ? "ressenti non noté" : `ressenti ${card.lastFeel}`;
   return `
-    <span class="difficulty difficulty-${difficulty}">${esc(card.lcDifficulty)}</span>
+    <span class="difficulty difficulty-${difficulty}">${esc(card.difficulty)}</span>
+    <span>${esc(platformsLabel(card))}</span>
     <span>${esc(modeLabel(card.lastMode))}</span>
     <span>${esc(feel)}</span>
   `;
@@ -68,10 +88,10 @@ function dueBadgeHtml(card: ProblemCard, todayMid: number): string {
 
 function reviewRowHtml(card: ProblemCard, todayMid: number): string {
   return `
-    <button class="review-row" data-open="${esc(card.slug)}">
+    <button class="review-row" data-open="${esc(card.id)}">
       <span class="review-copy">
-        <span class="review-name">${esc(card.frontendId)}. ${esc(card.title)}</span>
-        <span class="review-meta">${esc(card.lcDifficulty)} · ${esc(modeLabel(card.lastMode))} · ${
+        <span class="review-name">${esc(card.title)}</span>
+        <span class="review-meta">${esc(platformsLabel(card))} · ${esc(card.difficulty)} · ${esc(modeLabel(card.lastMode))} · ${
           card.lastFeel === null ? "non noté" : `ressenti ${card.lastFeel}`
         }</span>
       </span>
@@ -81,14 +101,34 @@ function reviewRowHtml(card: ProblemCard, todayMid: number): string {
   `;
 }
 
-async function activeTrackedSlug(cards: Record<string, ProblemCard>): Promise<string | null> {
+interface ActiveTrackedProblem {
+  id: string;
+  platform: Platform;
+}
+
+async function activeTrackedProblem(
+  cards: Record<string, ProblemCard>,
+): Promise<ActiveTrackedProblem | null> {
   try {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) return null;
     const url = new URL(tab.url);
-    if (url.origin !== LC_ORIGIN) return null;
-    const slug = problemSlugFromPathname(url.pathname);
-    return slug !== null && cards[slug] !== undefined ? slug : null;
+    const platform: Platform | null =
+      url.origin === NC_ORIGIN
+        ? "neetcode"
+        : url.origin === LC_ORIGIN
+          ? "leetcode"
+          : null;
+    if (platform === null) return null;
+    const slug =
+      platform === "neetcode"
+        ? ncProblemSlug(url.pathname)
+        : lcProblemSlug(url.pathname);
+    if (slug === null) return null;
+    const card = Object.values(cards).find(
+      (candidate) => candidate.sources[platform]?.slug === slug,
+    );
+    return card === undefined ? null : { id: card.id, platform };
   } catch {
     return null;
   }
@@ -98,6 +138,9 @@ async function render(): Promise<void> {
   if (!app) return;
   pendingMode = null;
   pendingFeel = null;
+  // Barrière explicite : aucune lecture directe ne peut observer un mélange de
+  // l'ancien schéma LeetCode et du nouveau schéma multi-plateforme.
+  await sendToBackground({ kind: "STORAGE_READY" });
   const [data, github] = await Promise.all([
     getAllData(),
     sendToBackground({ kind: "GITHUB_GET_STATUS" }).catch(() => null),
@@ -110,9 +153,7 @@ async function render(): Promise<void> {
   const weekEnd = todayMid + 7 * DAY_MS;
 
   const all = Object.values(data.cards);
-  const due = all
-    .filter((c) => new Date(c.fsrs.due).getTime() <= nowMs)
-    .sort((a, b) => a.fsrs.due.localeCompare(b.fsrs.due));
+  const due = dueCards(data.cards, nowMs);
   const next = all
     .filter((c) => new Date(c.fsrs.due).getTime() > nowMs)
     .sort((a, b) => a.fsrs.due.localeCompare(b.fsrs.due))[0];
@@ -130,7 +171,8 @@ async function render(): Promise<void> {
     day: "numeric",
     month: "long",
   });
-  const activeSlug = await activeTrackedSlug(data.cards);
+  const active = await activeTrackedProblem(data.cards);
+  const activeId = active?.id ?? null;
 
   const parts: string[] = [];
   parts.push(`
@@ -156,7 +198,7 @@ async function render(): Promise<void> {
   if (data.pendingAccepted !== null) {
     parts.push(pendingBlockHtml(data.pendingAccepted));
   } else {
-    parts.push(focusBlockHtml(due, next, now, activeSlug));
+    parts.push(focusBlockHtml(due, next, now, activeId));
   }
 
   if (data.pendingAccepted === null) {
@@ -166,11 +208,11 @@ async function render(): Promise<void> {
 
   if (
     data.pendingAccepted === null &&
-    activeSlug !== null &&
-    due.some((card) => card.slug === activeSlug)
+    activeId !== null &&
+    due.some((card) => card.id === activeId)
   ) {
     parts.push(`
-      <button class="defer-action" data-abandon="${esc(activeSlug)}">
+      <button class="defer-action" data-abandon="${esc(activeId)}" data-abandon-platform="${active?.platform ?? "leetcode"}">
         Je bloque sur cette révision · la revoir demain
       </button>
     `);
@@ -186,14 +228,14 @@ function focusBlockHtml(
   due: ProblemCard[],
   next: ProblemCard | undefined,
   now: Date,
-  activeSlug: string | null,
+  activeId: string | null,
 ): string {
   const focus = due[0];
   if (focus === undefined) {
     const nextCopy =
       next === undefined
         ? "Résous un problème pour démarrer ton planning de révision."
-        : `${esc(next.frontendId)}. ${esc(next.title)} · ${esc(
+        : `${esc(next.title)} · ${esc(
             formatDueRelative(next.fsrs.due, now),
           )}`;
     return `
@@ -207,7 +249,7 @@ function focusBlockHtml(
   }
 
   const count = due.length;
-  const verb = activeSlug === focus.slug ? "Reprendre" : "Commencer";
+  const verb = activeId === focus.id ? "Reprendre" : "Commencer";
   return `
     <main class="focus-card" aria-labelledby="focus-title">
       <div class="eyebrow">FOCUS DU JOUR</div>
@@ -215,10 +257,10 @@ function focusBlockHtml(
       <div class="focus-meta">${cardMetaHtml(focus)}</div>
       <button
         class="primary-action"
-        data-open="${esc(focus.slug)}"
-        aria-label="Réviser ${esc(focus.frontendId)}. ${esc(focus.title)}"
+        data-open="${esc(focus.id)}"
+        aria-label="Réviser ${esc(focus.title)}"
       >
-        <span>${verb} avec ${esc(focus.frontendId)}. ${esc(focus.title)}</span>
+        <span>${verb} avec ${esc(focus.title)}</span>
         ${ICONS.arrow}
       </button>
     </main>
@@ -278,7 +320,7 @@ function githubBlockHtml(status: GithubSyncStatus): string {
       ? "Terminer la configuration"
       : status.repository !== null || status.pendingCount > 0
         ? `Reconnecter GitHub${status.pendingCount > 0 ? ` · ${status.pendingCount} en attente` : ""}`
-        : "Sauvegarder automatiquement les Accepted"
+        : "Sauvegarder les Accepted LeetCode"
     : "Configuration indisponible";
   return `
     <button class="sync-strip" data-options>
@@ -297,14 +339,14 @@ let pendingMode: Extract<Mode, "seul" | "aide"> | null = null;
 let pendingFeel: Feel | null = null;
 
 function pendingBlockHtml(p: PendingAccepted): string {
-  const difficulty = p.lcDifficulty.toLowerCase();
+  const difficulty = p.problem.difficulty.toLowerCase();
   return `
     <main class="focus-card pending-card" id="pending" aria-labelledby="pending-title">
       <div class="eyebrow">ACTION REQUISE</div>
       <h1 id="pending-title">Noter le dernier Accepted</h1>
       <div class="pending-problem">
-        <span>${esc(p.frontendId)}. ${esc(p.title)}</span>
-        <span class="difficulty difficulty-${difficulty}">${esc(p.lcDifficulty)}</span>
+        <span>${esc(p.problem.title)}</span>
+        <span class="difficulty difficulty-${difficulty}">${esc(p.problem.difficulty)}</span>
       </div>
       <div class="field-label">Résolution</div>
       <div class="rate-row" data-group="mode">
@@ -335,7 +377,7 @@ async function refreshPendingPreview(p: PendingAccepted): Promise<void> {
   try {
     const { scheduledDue } = await sendToBackground({
       kind: "PREVIEW_REVIEW",
-      slug: p.slug,
+      problemId: p.problemId,
       mode: pendingMode,
       feel: pendingFeel,
     });
@@ -347,15 +389,35 @@ async function refreshPendingPreview(p: PendingAccepted): Promise<void> {
 
 function reviewFromPending(p: PendingAccepted, mode: Mode, feel: Feel): ReviewInput {
   return {
-    slug: p.slug,
-    frontendId: p.frontendId,
-    title: p.title,
-    lcDifficulty: p.lcDifficulty,
-    metaIncomplete: p.lcDifficulty === "Unknown",
+    problemId: p.problemId,
+    problem: p.problem,
     mode,
     feel,
     submissionsInSession: p.submissionsInSession,
     minutesInSession: p.minutesInSession,
+  };
+}
+
+function descriptorFromCard(
+  card: ProblemCard,
+  preferredPlatform?: Platform,
+): ProblemDescriptor {
+  const platform: Platform =
+    preferredPlatform !== undefined && card.sources[preferredPlatform] !== undefined
+      ? preferredPlatform
+      : card.sources.leetcode !== undefined
+        ? "leetcode"
+        : "neetcode";
+  const source = card.sources[platform];
+  if (source === undefined) throw new Error("Carte sans plateforme");
+  return {
+    platform,
+    slug: source.slug,
+    title: card.title,
+    difficulty: card.difficulty,
+    frontendId: source.frontendId,
+    listSlug: source.listSlug,
+    metaIncomplete: card.metaIncomplete === true,
   };
 }
 
@@ -366,25 +428,26 @@ function wire(cards: Record<string, ProblemCard>, pending: PendingAccepted | nul
 
   app.querySelectorAll<HTMLButtonElement>("[data-open]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const slug = btn.getAttribute("data-open");
-      if (slug !== null) void browser.tabs.create({ url: reviewProblemUrl(slug) });
+      const problemId = btn.getAttribute("data-open");
+      const card = problemId === null ? undefined : cards[problemId];
+      if (card !== undefined) void browser.tabs.create({ url: problemUrl(card) });
     });
   });
 
   const abandonBtn = app.querySelector<HTMLButtonElement>("[data-abandon]");
   abandonBtn?.addEventListener("click", () => {
-    const slug = abandonBtn.getAttribute("data-abandon");
-    const card = slug !== null ? cards[slug] : undefined;
+    const problemId = abandonBtn.getAttribute("data-abandon");
+    const card = problemId !== null ? cards[problemId] : undefined;
     if (!card) return;
+    const platform = abandonBtn.getAttribute("data-abandon-platform");
+    const preferredPlatform =
+      platform === "leetcode" || platform === "neetcode" ? platform : undefined;
     abandonBtn.disabled = true;
     void sendToBackground({
       kind: "LOG_REVIEW",
       review: {
-        slug: card.slug,
-        frontendId: card.frontendId,
-        title: card.title,
-        lcDifficulty: card.lcDifficulty,
-        metaIncomplete: card.metaIncomplete === true,
+        problemId: card.id,
+        problem: descriptorFromCard(card, preferredPlatform),
         mode: "abandon",
         feel: null,
         submissionsInSession: 0,
@@ -453,7 +516,7 @@ function wire(cards: Record<string, ProblemCard>, pending: PendingAccepted | nul
   }
 }
 
-/** Export §9.2 : { schemaVersion, cards, log, settings }, horodaté. */
+/** Export FSRS uniquement : credentials et file GitHub restent exclus. */
 async function exportJson(): Promise<void> {
   const { schemaVersion, cards, log, settings } = await getAllData();
   const blob = new Blob([JSON.stringify({ schemaVersion, cards, log, settings }, null, 2)], {
@@ -466,7 +529,7 @@ async function exportJson(): Promise<void> {
     .replace("T", "-");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `lcfsrs-export-${stamp}.json`;
+  a.download = `companion-export-${stamp}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 }

@@ -3,12 +3,12 @@
 
 import { GRAPHQL_URL } from "./lc-endpoints";
 import type { AcceptedSubmissionForSync } from "./github/types";
-import type { ProblemCard } from "./types";
+import type { Difficulty } from "./types";
 
 export interface QuestionMeta {
   frontendId: string;
   title: string;
-  lcDifficulty: ProblemCard["lcDifficulty"];
+  lcDifficulty: Difficulty;
   metaIncomplete: boolean;
 }
 
@@ -116,7 +116,7 @@ function displayMetric(display: unknown, raw: unknown, suffix: string): string |
   return value === null ? null : `${value} ${suffix}`;
 }
 
-function parseDifficulty(value: unknown): ProblemCard["lcDifficulty"] {
+function parseDifficulty(value: unknown): Difficulty {
   return value === "Easy" || value === "Medium" || value === "Hard" ? value : "Unknown";
 }
 

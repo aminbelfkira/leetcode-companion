@@ -5,13 +5,14 @@ import {
   ALARM_BADGE_DAILY,
   ALARM_BADGE_PERIODIC,
   ALARM_GITHUB_RETRY,
+  ALARM_SUPABASE_SYNC,
   BADGE_COLOR,
   DAILY_ALARM_HOUR,
   DAILY_ALARM_MINUTE,
   GITHUB_RETRY_MINUTES,
   LOG_PREFIX,
+  SUPABASE_SYNC_MINUTES,
 } from "../src/config";
-import { gradeFor, nextState } from "../src/fsrs";
 import {
   GithubApiError,
   GithubReauthorizationRequiredError,
@@ -45,22 +46,24 @@ import type {
 } from "../src/github/types";
 import {
   getCards,
-  getLog,
-  getPendingAccepted,
-  getSettings,
   migrateIfNeeded,
-  saveReview,
   setPendingAccepted,
-  setSettings,
-  updateCardMeta,
 } from "../src/storage";
-import type {
-  ProblemCard,
-  ReviewInput,
-  ReviewLogEntry,
-  RuntimeRequest,
-  RuntimeResponseMap,
-} from "../src/types";
+import {
+  getSupabaseSyncStatus,
+  signInSupabaseWithGithub,
+  signOutSupabase,
+  synchronizeSupabase,
+} from "../src/supabase/sync";
+import {
+  checkCooldown,
+  logReview,
+  prepareAccepted,
+  previewReview,
+  snoozeBanner,
+  updateCardMeta,
+} from "../src/review";
+import type { RuntimeRequest } from "../src/types";
 
 export default defineBackground(() => {
   const githubReauthorizationMessage =
@@ -68,9 +71,8 @@ export default defineBackground(() => {
 
   console.log(`${LOG_PREFIX} background démarré`);
 
-  void migrateIfNeeded()
-    .then(updateBadge)
-    .catch((err) => console.error(`${LOG_PREFIX} migration`, err));
+  const ready = migrateIfNeeded().then(updateBadge);
+  void ready.catch((err) => console.error(`${LOG_PREFIX} migration`, err));
 
   // §8 — recalculs périodiques (jamais de setTimeout long en MV3).
   void browser.alarms.create(ALARM_BADGE_PERIODIC, { periodInMinutes: 60 });
@@ -81,6 +83,9 @@ export default defineBackground(() => {
   void browser.alarms.create(ALARM_GITHUB_RETRY, {
     periodInMinutes: GITHUB_RETRY_MINUTES,
   });
+  void browser.alarms.create(ALARM_SUPABASE_SYNC, {
+    periodInMinutes: SUPABASE_SYNC_MINUTES,
+  });
   browser.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === ALARM_BADGE_PERIODIC || alarm.name === ALARM_BADGE_DAILY) {
       void updateBadge();
@@ -89,6 +94,9 @@ export default defineBackground(() => {
       void serializedGithub(flushGithubQueue).catch((err: unknown) =>
         console.warn(`${LOG_PREFIX} GitHub retry`, err),
       );
+    }
+    if (alarm.name === ALARM_SUPABASE_SYNC) {
+      void syncSupabaseBestEffort();
     }
   });
 
@@ -131,13 +139,36 @@ export default defineBackground(() => {
     return next;
   }
 
+  // Auth, refresh token et ecritures distantes partagent une file pour ne
+  // jamais utiliser deux fois le meme refresh token Supabase.
+  let supabaseQueue: Promise<unknown> = Promise.resolve();
+  function serializedSupabase<T>(fn: () => Promise<T>): Promise<T> {
+    const next = supabaseQueue.then(fn);
+    supabaseQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  async function syncSupabaseBestEffort(): Promise<void> {
+    try {
+      // La lecture/fusion/remplacement distant partage aussi le verrou FSRS :
+      // une nouvelle review ne peut pas etre ecrasee pendant une requete lente.
+      await serializedSupabase(() =>
+        serialized(() => synchronizeSupabase(false)),
+      );
+      await updateBadge();
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Supabase sync`, error);
+    }
+  }
+
   void serializedGithub(flushGithubQueue).catch((err: unknown) =>
     console.warn(`${LOG_PREFIX} GitHub reprise`, err),
   );
+  void ready.then(syncSupabaseBestEffort);
 
   browser.runtime.onMessage.addListener(
-    (message: unknown, _sender, sendResponse: (response: unknown) => void) => {
-      handle(message as RuntimeRequest)
+    (message: unknown, sender, sendResponse: (response: unknown) => void) => {
+      handle(message as RuntimeRequest, sender)
         .then(sendResponse)
         .catch((err: unknown) => {
           console.error(`${LOG_PREFIX} message`, err);
@@ -147,42 +178,80 @@ export default defineBackground(() => {
     },
   );
 
-  async function handle(msg: RuntimeRequest): Promise<unknown> {
+  async function handle(msg: RuntimeRequest, sender: unknown): Promise<unknown> {
+    await ready;
     switch (msg.kind) {
+      case "STORAGE_READY":
+        return { ok: true } as const;
+      case "PREPARE_ACCEPTED": {
+        const result = await serialized(() => prepareAccepted(msg.problem));
+        await syncSupabaseBestEffort();
+        return result;
+      }
       case "CHECK_COOLDOWN":
-        return checkCooldown(msg.slug);
+        return checkCooldown(msg.problemId);
       case "PREVIEW_REVIEW":
-        return previewReview(msg.slug, msg.mode, msg.feel);
-      case "LOG_REVIEW":
-        return serialized(() => logReview(msg.review));
-      case "SET_PENDING_ACCEPTED":
-        return serialized(async () => {
+        return previewReview(msg.problemId, msg.mode, msg.feel);
+      case "LOG_REVIEW": {
+        const result = await serialized(async () => {
+          const result = await logReview(msg.review);
+          await updateBadge();
+          return result;
+        });
+        await syncSupabaseBestEffort();
+        return result;
+      }
+      case "SET_PENDING_ACCEPTED": {
+        const result = await serialized(async () => {
           await setPendingAccepted(msg.pending);
           return { ok: true } as const;
         });
-      case "CLEAR_PENDING_ACCEPTED":
-        return serialized(async () => {
+        await syncSupabaseBestEffort();
+        return result;
+      }
+      case "CLEAR_PENDING_ACCEPTED": {
+        const result = await serialized(async () => {
           await setPendingAccepted(null);
           return { ok: true } as const;
         });
-      case "UPDATE_CARD_META":
-        return serialized(async () => {
-          await updateCardMeta(msg.slug, {
-            frontendId: msg.frontendId,
-            title: msg.title,
-            lcDifficulty: msg.lcDifficulty,
-          });
+        await syncSupabaseBestEffort();
+        return result;
+      }
+      case "UPDATE_CARD_META": {
+        const result = await serialized(async () => {
+          await updateCardMeta(msg.problem);
           return { ok: true } as const;
         });
-      case "SNOOZE_BANNER":
-        return serialized(async () => {
-          // §9.3 — snooze jusqu'au prochain minuit local.
-          const midnight = new Date();
-          midnight.setHours(24, 0, 0, 0);
-          const settings = await getSettings();
-          await setSettings({ ...settings, bannerSnoozedUntil: midnight.toISOString() });
+        await syncSupabaseBestEffort();
+        return result;
+      }
+      case "SNOOZE_BANNER": {
+        const result = await serialized(async () => {
+          await snoozeBanner();
           return { ok: true } as const;
         });
+        await syncSupabaseBestEffort();
+        return result;
+      }
+      case "SUPABASE_GET_STATUS":
+        return serializedSupabase(getSupabaseSyncStatus);
+      case "SUPABASE_SIGN_IN_GITHUB":
+        assertExtensionSender(sender);
+        return serializedSupabase(() =>
+          serialized(signInSupabaseWithGithub),
+        );
+      case "SUPABASE_SIGN_OUT":
+        assertExtensionSender(sender);
+        return serializedSupabase(signOutSupabase);
+      case "SUPABASE_SYNC_NOW":
+        assertExtensionSender(sender);
+        return serializedSupabase(() =>
+          serialized(async () => {
+            const status = await synchronizeSupabase();
+            await updateBadge();
+            return status;
+          }),
+        );
       case "GITHUB_GET_STATUS":
         return getGithubSyncStatus();
       case "GITHUB_START_DEVICE_FLOW":
@@ -210,7 +279,43 @@ export default defineBackground(() => {
           return getGithubSyncStatus();
         });
       case "GITHUB_SYNC_SUBMISSION":
+        if (!isLeetCodeSender(sender)) {
+          throw new Error("GitHub Sync est réservé aux soumissions LeetCode");
+        }
         return serializedGithub(() => enqueueGithubSubmission(msg.submission));
+    }
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+  }
+
+  function isLeetCodeSender(sender: unknown): boolean {
+    if (!isRecord(sender)) return false;
+    const tab = isRecord(sender.tab) ? sender.tab : null;
+    const candidate =
+      typeof sender.url === "string"
+        ? sender.url
+        : tab !== null && typeof tab.url === "string"
+          ? tab.url
+          : null;
+    if (candidate === null) return false;
+    try {
+      return new URL(candidate).origin === "https://leetcode.com";
+    } catch {
+      return false;
+    }
+  }
+
+  function assertExtensionSender(sender: unknown): void {
+    if (!isRecord(sender) || typeof sender.url !== "string") {
+      throw new Error("Action Supabase réservée aux réglages de l'extension");
+    }
+    try {
+      const extensionOrigin = new URL(browser.runtime.getURL("/")).origin;
+      if (new URL(sender.url).origin !== extensionOrigin) throw new Error("origine");
+    } catch {
+      throw new Error("Action Supabase réservée aux réglages de l'extension");
     }
   }
 
@@ -399,63 +504,4 @@ export default defineBackground(() => {
     }
   }
 
-  /** §7 — dernier log du slug < reviewCooldownHours ⇒ ignorer l'Accepted. */
-  async function checkCooldown(slug: string): Promise<RuntimeResponseMap["CHECK_COOLDOWN"]> {
-    const [log, settings] = await Promise.all([getLog(), getSettings()]);
-    const lastTs = log.filter((e) => e.slug === slug).at(-1)?.ts;
-    if (lastTs === undefined) return { underCooldown: false }; // jamais suivi
-    const elapsedH = (Date.now() - new Date(lastTs).getTime()) / 3_600_000;
-    return { underCooldown: elapsedH < settings.reviewCooldownHours };
-  }
-
-  async function previewReview(
-    slug: string,
-    mode: ReviewInput["mode"],
-    feel: ReviewInput["feel"],
-  ): Promise<RuntimeResponseMap["PREVIEW_REVIEW"]> {
-    const [cards, settings] = await Promise.all([getCards(), getSettings()]);
-    const prev = cards[slug]?.fsrs ?? null;
-    const grade = gradeFor(mode, feel, settings);
-    return { scheduledDue: nextState(prev, grade, new Date(), settings).due };
-  }
-
-  async function logReview(review: ReviewInput): Promise<RuntimeResponseMap["LOG_REVIEW"]> {
-    const now = new Date();
-    const [cards, settings, pending] = await Promise.all([
-      getCards(),
-      getSettings(),
-      getPendingAccepted(),
-    ]);
-    const existing = cards[review.slug];
-    const grade = gradeFor(review.mode, review.feel, settings);
-    const fsrs = nextState(existing?.fsrs ?? null, grade, now, settings);
-
-    const card: ProblemCard = {
-      slug: review.slug,
-      frontendId: review.frontendId,
-      title: review.title,
-      lcDifficulty: review.lcDifficulty,
-      ...(review.metaIncomplete ? { metaIncomplete: true } : {}),
-      lastMode: review.mode,
-      lastFeel: review.mode === "abandon" ? null : review.feel,
-      fsrs,
-      createdAt: existing?.createdAt ?? now.toISOString(),
-      updatedAt: now.toISOString(),
-    };
-    const entry: ReviewLogEntry = {
-      ts: now.toISOString(),
-      slug: review.slug,
-      mode: review.mode,
-      feel: review.feel,
-      grade,
-      submissionsInSession: review.submissionsInSession,
-      minutesInSession: review.minutesInSession,
-      scheduledDue: fsrs.due,
-    };
-    await saveReview(card, entry);
-    if (pending?.slug === review.slug) await setPendingAccepted(null);
-    console.log(`${LOG_PREFIX} review loguée`, { slug: review.slug, grade, due: fsrs.due });
-    await updateBadge();
-    return { scheduledDue: fsrs.due };
-  }
 });

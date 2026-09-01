@@ -17,3 +17,7 @@ export const DAILY_ALARM_MINUTE = 5;
 /** Retente les commits GitHub restés en file après une coupure réseau. */
 export const ALARM_GITHUB_RETRY = "lcfsrs-github-retry";
 export const GITHUB_RETRY_MINUTES = 15;
+
+/** Synchronisation local-first des donnees FSRS vers Supabase. */
+export const ALARM_SUPABASE_SYNC = "lcfsrs-supabase-sync";
+export const SUPABASE_SYNC_MINUTES = 5;
