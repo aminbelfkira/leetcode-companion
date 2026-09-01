@@ -31,7 +31,15 @@ Puis dans Chrome :
 
 Pour développer : `npm run dev`.
 
-## Configuration Supabase
+## Configuration Supabase (mainteneur uniquement)
+
+Si tu installes une version publiée de l'extension, **tu n'as rien à configurer dans Supabase** :
+le projet Supabase, l'authentification GitHub et l'URL de redirection sont déjà intégrés au build.
+Il suffit d'ouvrir les réglages de Companion et de cliquer sur **Continuer avec GitHub**.
+
+Les étapes ci-dessous ne sont nécessaires que pour le mainteneur du projet, ou pour quelqu'un qui
+reconstruit une version personnalisée depuis le dépôt. Elles ne sont pas à refaire pour chaque
+installation ou pour chaque utilisateur.
 
 ### 1. Créer la base
 
